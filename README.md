@@ -1,0 +1,135 @@
+# 🧬 3D Interactive High-Dimensional Data Explorer
+### Hệ Thống Thám Hiểm & Trực Quan Hóa Dữ Liệu Đa Chiều Không Gian 3D Thời Gian Thực
+
+[![React](https://img.shields.io/badge/React-18.3-blue.svg)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue.svg)](https://www.typescriptlang.org/)
+[![Three.js](https://img.shields.io/badge/Three.js-0.169-black.svg)](https://threejs.org/)
+[![Vite](https://img.shields.io/badge/Vite-5.4-purple.svg)](https://vitejs.dev/)
+[![Express](https://img.shields.io/badge/Express-4.21-green.svg)](https://expressjs.com/)
+[![MongoDB Atlas](https://img.shields.io/badge/MongoDB-Atlas%20Cloud-forestgreen.svg)](https://www.mongodb.com/atlas)
+[![TailwindCSS](https://img.shields.io/badge/TailwindCSS-v4-cyan.svg)](https://tailwindcss.com/)
+
+---
+
+## 📖 Giới thiệu Dự Án
+
+**3D Interactive High-Dimensional Data Explorer** là hệ thống phân tích và trực quan hóa dữ liệu y tế đa chiều (dữ liệu chẩn đoán ung thư vú Wisconsin Breast Cancer Diagnostic Dataset - 30 đặc trưng sinh học) trong không gian WebGL 3 chiều thời gian thực.
+
+Hệ thống được xây dựng theo kiến trúc **Fullstack 100% TypeScript/JavaScript**, kết hợp khả năng tính toán thuật toán giảm chiều và phân cụm dữ liệu với giao diện 3D tương tác mượt mà, hỗ trợ bộ nhớ đệm đám mây **MongoDB Atlas Cloud Cache** đạt tốc độ phản hồi 1ms–3ms.
+
+---
+
+## ✨ Tính Năng Nổi Bật
+
+### 1. 🌐 Không Gian Trực Quan Hóa 3D (Three.js WebGL)
+- **Tương tác 3D mượt mà**: Xoay (Orbit), Thu phóng (Zoom), Di chuyển (Pan) và Tự động xoay quanh tâm (Auto-rotation).
+- **Tùy chỉnh hạt phân tử**: Thanh trượt `TooltipSlider` chỉnh kích thước điểm dữ liệu `0.6x` – `3.5x` thời gian thực.
+- **Tô màu đa chế độ**: Tô màu theo Nhãn bệnh án gốc (Ác tính / Lành tính), theo Cụm phân thuật toán (Clusters), hoặc theo Bản đồ nhiệt của từng đặc trưng (Continuous Heatmap).
+- **Chụp ảnh 3D phân giải cao**: Xuất ảnh 3D PNG sắc nét cho báo cáo nghiên cứu và thuyết trình.
+- **Chế độ màn hình đôi (Dual Viewport Comparison)**: So sánh đối chiếu 2 thuật toán cùng lúc với cơ chế khóa đồng bộ góc quay camera (Synchronized Camera Orbit).
+
+### 2. 📉 Thuật Toán Giảm Chiều Không Gian (Dimensionality Reduction)
+- **PCA (Principal Component Analysis)**:
+  - **Biểu đồ Scree Plot**: Thống kê tỷ lệ giải thích phương sai từng trục PC1 (Trục X), PC2 (Trục Y), PC3 (Trục Z) và tổng phương sai bảo toàn tích lũy (`72.6%`).
+  - **Bảng Feature Loadings**: Xếp hạng Top 5 đặc trưng sinh học chi phối mạnh nhất từng trục.
+  - **Véc-tơ Biplot tương tác 3D**: Hiển thị các mũi tên véc-tơ đặc trưng với thanh trượt chọn Top N véc-tơ và thanh chỉnh độ dài véc-tơ (Vector Scale).
+- **t-SNE (t-Distributed Stochastic Neighbor Embedding)**:
+  - Tinh chỉnh Độ phức tạp (*Perplexity: 3–50*) và Số vòng lặp (*Iterations: 100–1000*).
+  - **Hoạt họa tụ cụm Live 3D (Live Optimization)**: Quan sát quá trình các điểm dữ liệu tự động hút và co cụm theo từng bước lặp.
+- **UMAP (Uniform Manifold Approximation & Projection)**:
+  - Điều khiển Số láng giềng (*nNeighbors*) và Khoảng cách tối thiểu (*minDist*).
+- **Chuẩn hóa dữ liệu (Preprocessing)**: Hỗ trợ chuẩn hóa **Z-Score Standardize**, **Min-Max Scaling**, hoặc giữ nguyên dữ liệu **Gốc**.
+
+### 3. 🔍 Thuật Toán Phân Cụm Dữ Liệu (Clustering)
+- **K-Means Clustering**: Khởi tạo bằng **K-Means++**, hiển thị vòng tròn tâm cụm phát sáng trong không gian 3D.
+- **Dò tìm K tối ưu (Elbow Method & Silhouette Analysis)**: Tích hợp cửa sổ đồ thị trực quan tự động tính điểm gãy khuỷu tay (Inertia WCSS) và chỉ số Silhouette từ K=2 đến K=10.
+- **DBSCAN (Density-Based Spatial Clustering)**: Tự động phát hiện hình dạng cụm bất kỳ và tách riêng các điểm nhiễu ngoại lai (Noise points).
+
+### 4. ⚡ Kiến Trúc Backend Tối Ưu & MongoDB Atlas Cloud
+- **Multi-Tier SHA-256 Caching**: Băm chữ ký dữ liệu tính toán. Truy vấn lặp lại trả kết quả trong **1ms–3ms**.
+- **Nén Gzip HTTP Compression**: Giảm 70% dung lượng payload truyền tải qua mạng.
+- **Trung tâm Giám sát Hệ thống**: Theo dõi thời gian thực RAM Usage, Uptime, độ trễ MongoDB, trạng thái kết nối mạng LAN.
+- **Xuất dữ liệu CSV**: Tải về file kết quả gồm tọa độ 3D và nhãn cụm vừa phân tích.
+
+---
+
+## 🛠️ Công Nghệ Sử Dụng (Tech Stack)
+
+| Thành phần | Công nghệ |
+| :--- | :--- |
+| **Frontend Core** | React 18, TypeScript, Vite 5 |
+| **3D Graphics Engine** | Three.js (WebGL), OrbitControls |
+| **Giao diện & Styling** | Vanilla CSS, TailwindCSS v4, Lucide Icons |
+| **Backend API** | Node.js, Express 4, tsx |
+| **Cơ sở dữ liệu** | MongoDB Atlas Cloud (M0 Cluster), SQLite fallback |
+| **Xử lý dữ liệu** | PapaParse, CSV Streams |
+
+---
+
+## 🚀 Hướng Dẫn Cài Đặt & Khởi Chạy
+
+### 1. Yêu cầu hệ thống
+- Đã cài đặt **Node.js** (phiên bản v18 trở lên).
+- Trình duyệt hiện đại hỗ trợ WebGL (Chrome, Edge, Brave, Firefox, Safari).
+
+### 2. Cài đặt các thư viện phụ thuộc
+Mở terminal trong thư mục dự án và chạy:
+```bash
+npm install
+```
+
+### 3. Cấu hình biến môi trường
+Tạo file `.env` từ file mẫu `.env.example`:
+```bash
+copy .env.example .env
+```
+*(Điền chuỗi kết nối MongoDB Atlas của bạn vào biến `MONGODB_URI` trong file `.env`).*
+
+### 4. Khởi động hệ thống
+Chạy đồng thời cả Backend API và Frontend 3D:
+```bash
+npm run dev:all
+```
+
+Sau khi terminal thông báo thành công, mở trình duyệt và truy cập:
+👉 **[http://localhost:3000](http://localhost:3000)**
+
+---
+
+## 📱 Chia sẻ trong mạng LAN / Wi-Fi
+
+Để mở và trải nghiệm ứng dụng trên điện thoại, máy tính bảng hoặc máy tính khác trong cùng mạng Wi-Fi:
+```bash
+npm run dev:host
+```
+Terminal sẽ hiển thị địa chỉ IP cục bộ (ví dụ: `http://192.168.1.15:3000`) để các thiết bị khác kết nối trực tiếp.
+
+---
+
+## 📂 Cấu Trúc Thư Mục Dự Án
+
+```
+Cancer.db/
+├── public/                 # File dữ liệu tĩnh (data.csv, wholesale.csv)
+├── server/                 # Mã nguồn Backend Express & MongoDB Atlas
+│   ├── db.ts               # Kết nối CSDL Cloud & Bộ nhớ đệm SHA-256
+│   └── index.ts            # API Server, Gzip Compression, Endpoint tính toán
+├── src/                    # Mã nguồn Frontend React & Three.js
+│   ├── algorithms/         # Thuật toán PCA, t-SNE, UMAP, K-Means, DBSCAN
+│   ├── components/         # Giao diện UI, TooltipSlider, 3D Canvas, Modals
+│   ├── types/              # Định nghĩa kiểu dữ liệu TypeScript
+│   ├── utils/              # Tiện ích đọc CSV, tiền xử lý Z-Score / Min-Max
+│   ├── App.tsx             # Luồng điều khiển trung tâm của ứng dụng
+│   └── main.tsx            # Điểm khởi tạo ứng dụng React
+├── .env.example            # Mẫu biến môi trường bảo mật
+├── .gitignore              # Bộ lọc bảo mật Git
+├── package.json            # Danh sách gói phụ thuộc và scripts
+└── README.md               # Tài liệu hướng dẫn dự án
+```
+
+---
+
+## 👨‍💻 Tác giả
+- **Người phát triển**: Harry5867 / Anh Khoa
+- **Nhánh phát triển**: `cancer/db/khoa`
+- **Kho lưu trữ (Repository)**: [Interactive-High-Dimensional-Data-Explorer](https://github.com/Harry5867/Interactive-High-Dimensional-Data-Explorer)
