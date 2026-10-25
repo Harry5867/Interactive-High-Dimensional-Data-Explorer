@@ -1,9 +1,32 @@
-import { MongoClient, Db } from 'mongodb';
+import { MongoClient, Db, Document } from 'mongodb';
 import path from 'path';
 import fs from 'fs';
-import Papa from 'papaparse';
 import dotenv from 'dotenv';
 import dns from 'dns';
+import {
+  ComputeResult,
+  DatasetDocument,
+  DatasetRow,
+  DatasetSummary,
+  ExperimentRecord,
+  JsonValue,
+  SystemHealth,
+} from '../src/types';
+import { parseCSVString } from '../src/utils/dataParser';
+
+interface StoredDataset extends Document, DatasetDocument {}
+
+interface StoredExperiment extends Document {
+  datasetId: string;
+  datasetName: string;
+  reductionMethod: string;
+  clusteringMethod: string;
+  k: number;
+  silhouetteScore: number | null;
+  ari: number | null;
+  params: { [key: string]: JsonValue };
+  createdAt: string;
+}
 
 // Fix querySrv on Windows by using Google Public DNS
 try {
@@ -23,9 +46,9 @@ export let isMongoConnected = false;
 
 // In-Memory fallback store if remote MongoDB is unreachable
 const memoryStore = {
-  datasets: new Map<string, any>(),
-  experiments: [] as any[],
-  computeCache: new Map<string, { result: any; createdAt: number }>(),
+  datasets: new Map<string, DatasetDocument>(),
+  experiments: [] as ExperimentRecord[],
+  computeCache: new Map<string, { result: ComputeResult; createdAt: number }>(),
 };
 
 export async function initDatabase(): Promise<void> {
@@ -65,9 +88,10 @@ async function tryConnectMongo(isBackgroundRetry: boolean = false): Promise<void
 
     // Seed initial dataset data.csv
     await seedInitialDataset(db);
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (!isBackgroundRetry) {
-      console.warn(`⚠️ [MongoDB] Chưa kết nối được (${error.message}).`);
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`⚠️ [MongoDB] Chưa kết nối được (${message}).`);
       console.warn(`💡 [Chế độ tự hành]: Kích hoạt In-Memory Store để hệ thống chạy 100% trơn tru.`);
       await seedInitialDatasetMemory();
     }
@@ -80,10 +104,10 @@ export function getDb(): Db | null {
 }
 
 // 1. DATASET OPERATIONS
-export async function getAllDatasets(): Promise<any[]> {
+export async function getAllDatasets(): Promise<DatasetSummary[]> {
   if (isMongoConnected && db) {
     try {
-      const list = await db.collection('datasets').find({}, { projection: { rawRows: 0 } }).sort({ createdAt: -1 }).toArray();
+      const list = await db.collection<StoredDataset>('datasets').find({}, { projection: { rawRows: 0 } }).sort({ createdAt: -1 }).toArray();
       return list.map(item => ({
         id: item.id,
         name: item.name,
@@ -108,10 +132,10 @@ export async function getAllDatasets(): Promise<any[]> {
   }));
 }
 
-export async function getDatasetById(id: string): Promise<any | null> {
+export async function getDatasetById(id: string): Promise<DatasetDocument | null> {
   if (isMongoConnected && db) {
     try {
-      const doc = await db.collection('datasets').findOne({ id });
+      const doc = await db.collection<StoredDataset>('datasets').findOne({ id });
       if (doc) {
         return {
           id: doc.id,
@@ -122,6 +146,7 @@ export async function getDatasetById(id: string): Promise<any | null> {
           labelColumn: doc.labelColumn,
           idColumn: doc.idColumn,
           rawRows: doc.rawRows,
+          createdAt: doc.createdAt,
         };
       }
     } catch (e) {
@@ -131,7 +156,7 @@ export async function getDatasetById(id: string): Promise<any | null> {
   return memoryStore.datasets.get(id) || null;
 }
 
-export async function saveDataset(dataset: any): Promise<void> {
+export async function saveDataset(dataset: DatasetDocument): Promise<void> {
   const doc = {
     id: dataset.id,
     name: dataset.name,
@@ -148,7 +173,7 @@ export async function saveDataset(dataset: any): Promise<void> {
 
   if (isMongoConnected && db) {
     try {
-      await db.collection('datasets').replaceOne({ id: dataset.id }, doc, { upsert: true });
+      await db.collection<StoredDataset>('datasets').replaceOne({ id: dataset.id }, doc, { upsert: true });
     } catch (e) {
       console.error(e);
     }
@@ -156,10 +181,10 @@ export async function saveDataset(dataset: any): Promise<void> {
 }
 
 // 2. EXPERIMENT OPERATIONS
-export async function getAllExperiments(): Promise<any[]> {
+export async function getAllExperiments(): Promise<ExperimentRecord[]> {
   if (isMongoConnected && db) {
     try {
-      const list = await db.collection('experiments').find({}).sort({ createdAt: -1 }).limit(50).toArray();
+      const list = await db.collection<StoredExperiment>('experiments').find({}).sort({ createdAt: -1 }).limit(50).toArray();
       return list.map(item => ({
         id: item._id?.toString() || item.id,
         dataset_id: item.datasetId,
@@ -179,7 +204,18 @@ export async function getAllExperiments(): Promise<any[]> {
   return [...memoryStore.experiments].reverse();
 }
 
-export async function saveExperiment(experiment: any): Promise<string> {
+export interface NewExperiment {
+  datasetId: string;
+  datasetName: string;
+  reductionMethod: string;
+  clusteringMethod: string;
+  k: number;
+  silhouetteScore: number | null;
+  ari: number | null;
+  params: { [key: string]: JsonValue };
+}
+
+export async function saveExperiment(experiment: NewExperiment): Promise<string> {
   const doc = {
     ...experiment,
     createdAt: new Date().toISOString(),
@@ -201,7 +237,7 @@ export async function saveExperiment(experiment: any): Promise<string> {
 
   if (isMongoConnected && db) {
     try {
-      const res = await db.collection('experiments').insertOne(doc);
+      const res = await db.collection<StoredExperiment>('experiments').insertOne(doc);
       return res.insertedId.toString();
     } catch (e) {
       console.error(e);
@@ -220,27 +256,22 @@ async function seedInitialDataset(database: Db) {
   if (count === 0) {
     console.log('🌱 [MongoDB Atlas] Đang nạp bộ dữ liệu ban đầu data.csv vào MongoDB Atlas Cloud...');
     const csvContent = fs.readFileSync(cancerCsvPath, 'utf-8');
-    const parsed = Papa.parse<Record<string, any>>(csvContent.trim(), {
-      header: true,
-      dynamicTyping: true,
-      skipEmptyLines: true,
-    });
+    const parsed = parseCSVString(csvContent, 'Wisconsin Breast Cancer (data.csv)');
+    const rows: DatasetRow[] = parsed.rawRows;
 
-    const rows = parsed.data;
-    const headers = Object.keys(rows[0] || {});
-    const featureCols = headers.filter(h => h !== 'id' && h !== 'diagnosis' && typeof rows[0][h] === 'number');
-
-    await database.collection('datasets').insertOne({
+    const initialDataset: StoredDataset = {
       id: 'cancer_wdbc',
       name: 'Wisconsin Breast Cancer (data.csv)',
       filename: 'data.csv',
       totalRows: rows.length,
-      features: featureCols,
-      labelColumn: 'diagnosis',
-      idColumn: 'id',
+      features: parsed.featureColumns,
+      labelColumn: parsed.labelColumn,
+      idColumn: parsed.idColumn,
       rawRows: rows,
       createdAt: new Date().toISOString(),
-    });
+    };
+
+    await database.collection<StoredDataset>('datasets').insertOne(initialDataset);
     console.log('✅ [MongoDB Atlas] Đã nạp thành công 569 mẫu ung thư vú lên MongoDB Atlas Cloud!');
   }
 }
@@ -250,25 +281,17 @@ async function seedInitialDatasetMemory() {
   if (!fs.existsSync(cancerCsvPath)) return;
 
   const csvContent = fs.readFileSync(cancerCsvPath, 'utf-8');
-  const parsed = Papa.parse<Record<string, any>>(csvContent.trim(), {
-    header: true,
-    dynamicTyping: true,
-    skipEmptyLines: true,
-  });
-
-  const rows = parsed.data;
-  const headers = Object.keys(rows[0] || {});
-  const featureCols = headers.filter(h => h !== 'id' && h !== 'diagnosis' && typeof rows[0][h] === 'number');
+  const parsed = parseCSVString(csvContent, 'Wisconsin Breast Cancer (data.csv)');
 
   memoryStore.datasets.set('cancer_wdbc', {
     id: 'cancer_wdbc',
     name: 'Wisconsin Breast Cancer (data.csv)',
     filename: 'data.csv',
-    totalRows: rows.length,
-    features: featureCols,
-    labelColumn: 'diagnosis',
-    idColumn: 'id',
-    rawRows: rows,
+    totalRows: parsed.totalRows,
+    features: parsed.featureColumns,
+    labelColumn: parsed.labelColumn,
+    idColumn: parsed.idColumn,
+    rawRows: parsed.rawRows,
     createdAt: new Date().toISOString(),
   });
 }
@@ -290,7 +313,7 @@ export async function testDbConnection(): Promise<{ connected: boolean; message:
 }
 
 // 3. HIGH-SPEED RESULT CACHING (LRU + MONGODB)
-export async function getComputeCache(cacheKey: string): Promise<any | null> {
+export async function getComputeCache(cacheKey: string): Promise<ComputeResult | null> {
   // 1. Check in-memory LRU store (sub-millisecond O(1) hit)
   if (memoryStore.computeCache.has(cacheKey)) {
     return memoryStore.computeCache.get(cacheKey)!.result;
@@ -299,8 +322,8 @@ export async function getComputeCache(cacheKey: string): Promise<any | null> {
   // 2. Check MongoDB collection
   if (isMongoConnected && db) {
     try {
-      const doc = await db.collection('compute_cache').findOne({ cacheKey });
-      if (doc && doc.result) {
+      const doc = await db.collection<{ cacheKey: string; result: ComputeResult }>('compute_cache').findOne({ cacheKey });
+      if (doc?.result) {
         // Hydrate in-memory store for subsequent instant hits
         memoryStore.computeCache.set(cacheKey, { result: doc.result, createdAt: Date.now() });
         return doc.result;
@@ -312,7 +335,7 @@ export async function getComputeCache(cacheKey: string): Promise<any | null> {
   return null;
 }
 
-export async function saveComputeCache(cacheKey: string, result: any): Promise<void> {
+export async function saveComputeCache(cacheKey: string, result: ComputeResult): Promise<void> {
   // Cap in-memory cache to 120 entries to protect process heap
   if (memoryStore.computeCache.size > 120) {
     const oldestKey = memoryStore.computeCache.keys().next().value;
@@ -359,7 +382,7 @@ export async function clearComputeCache(): Promise<number> {
 }
 
 // 4. ENTERPRISE SYSTEM HEALTH & PERFORMANCE METRICS
-export async function getSystemHealth(): Promise<any> {
+export async function getSystemHealth(): Promise<SystemHealth> {
   const uptimeSeconds = Math.floor(process.uptime());
   const memUsage = process.memoryUsage();
 
@@ -399,4 +422,3 @@ export async function getSystemHealth(): Promise<any> {
     },
   };
 }
-

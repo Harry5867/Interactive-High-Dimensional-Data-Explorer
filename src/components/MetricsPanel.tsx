@@ -6,6 +6,7 @@ interface MetricsPanelProps {
   metrics: EvaluationMetrics;
   reductionMethod: ReductionMethod;
   hasGroundTruth: boolean;
+  hasResults: boolean;
   onSaveExperiment?: () => void;
   onOpenHistory?: () => void;
   isSaving?: boolean;
@@ -15,6 +16,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   metrics,
   reductionMethod,
   hasGroundTruth,
+  hasResults,
   onSaveExperiment,
   onOpenHistory,
   isSaving,
@@ -25,26 +27,24 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
   return (
     <div className="w-full flex flex-col items-center pointer-events-none select-none">
       {/* 1. COMPACT FLOATING BAR (Always visible, doesn't obstruct 3D chart) */}
-      <div className="pointer-events-auto flex items-center gap-3 bg-slate-900/90 hover:bg-slate-900 backdrop-blur-xl border border-slate-700/80 px-4 py-2 rounded-2xl shadow-2xl transition-all">
-        <div className="flex items-center gap-2 pr-3 border-r border-slate-700/80">
+      <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-x-3 gap-y-2.5 rounded-2xl border border-slate-700/90 bg-slate-900/95 px-4 py-3 shadow-2xl shadow-slate-950/50 backdrop-blur-xl transition-all hover:border-slate-600 sm:px-5">
+        <div className="flex items-center gap-2 pr-3 border-r border-slate-700/90">
           <Activity size={15} className="text-indigo-400" />
-          <span className="text-xs font-bold text-white tracking-wide">CHỈ SỐ:</span>
+          <span className="text-xs font-bold tracking-[0.12em] text-slate-100">CHỈ SỐ</span>
         </div>
 
         {/* Silhouette quick metric */}
-        <div className="flex items-center gap-1.5 text-xs font-mono">
-          <span className="text-slate-400 text-[11px]">Silhouette:</span>
-          <span className="font-bold text-emerald-400">
+        <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2 text-xs font-mono">
+          <span className="text-[11px] font-medium text-slate-300">Silhouette</span>
+          <span className="font-bold tabular-nums text-emerald-300">
             {silhouetteScore !== null ? silhouetteScore.toFixed(3) : 'N/A'}
           </span>
         </div>
 
-        <span className="text-slate-600">|</span>
-
         {/* ARI quick metric */}
-        <div className="flex items-center gap-1.5 text-xs font-mono">
-          <span className="text-slate-400 text-[11px]">ARI:</span>
-          <span className="font-bold text-cyan-400">
+        <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2 text-xs font-mono">
+          <span className="text-[11px] font-medium text-slate-300">ARI</span>
+          <span className="font-bold tabular-nums text-cyan-300">
             {adjustedRandIndex !== null ? adjustedRandIndex.toFixed(3) : 'N/A'}
           </span>
         </div>
@@ -52,10 +52,9 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
         {/* PCA Variance if applicable */}
         {reductionMethod === 'PCA' && totalVarianceExplained !== undefined && (
           <>
-            <span className="text-slate-600">|</span>
-            <div className="flex items-center gap-1.5 text-xs font-mono">
-              <span className="text-slate-400 text-[11px]">Phương sai 3D:</span>
-              <span className="font-bold text-amber-400">
+            <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-950/20 px-3 py-2 text-xs font-mono">
+              <span className="text-[11px] font-medium text-slate-300">Phương sai 3D</span>
+              <span className="font-bold tabular-nums text-amber-300">
                 {(totalVarianceExplained * 100).toFixed(1)}%
               </span>
             </div>
@@ -63,13 +62,13 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
         )}
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2 pl-3 border-l border-slate-700/80">
+        <div className="flex items-center gap-2 border-l border-slate-700/80 pl-3">
           {onSaveExperiment && (
             <button
               onClick={onSaveExperiment}
-              disabled={isSaving}
-              title="Lưu kết quả chạy vào MongoDB"
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-[11px] font-semibold text-white transition-all shadow shadow-emerald-700/40 disabled:opacity-50"
+              disabled={isSaving || !hasResults}
+              title={hasResults ? 'Lưu kết quả chạy vào MongoDB' : 'Chạy giảm chiều trước khi lưu kết quả'}
+              className="flex min-h-9 items-center gap-1.5 rounded-xl border border-emerald-400/30 bg-emerald-600/90 px-3 py-2 text-[11px] font-semibold text-white shadow shadow-emerald-950/40 transition-all hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Save size={12} />
               <span>{isSaving ? 'Đang lưu...' : 'Lưu Mongo'}</span>
@@ -80,7 +79,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
             <button
               onClick={onOpenHistory}
               title="Xem lịch sử thí nghiệm đã lưu trong MongoDB"
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-300 transition-all border border-slate-700"
+              className="flex min-h-9 items-center gap-1.5 rounded-xl border border-slate-600/80 bg-slate-800/90 px-3 py-2 text-[11px] font-semibold text-slate-100 transition-all hover:border-slate-500 hover:bg-slate-700"
             >
               <Database size={12} className="text-emerald-400" />
               <span>Lịch sử</span>
@@ -90,7 +89,7 @@ export const MetricsPanel: React.FC<MetricsPanelProps> = ({
           {/* Toggle Expand Button */}
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900/80 text-indigo-300 text-[11px] font-semibold border border-indigo-800/60 transition-all"
+            className="flex min-h-9 items-center gap-1.5 rounded-xl border border-indigo-500/40 bg-indigo-950/80 px-3 py-2 text-[11px] font-semibold text-indigo-200 transition-all hover:border-indigo-400/60 hover:bg-indigo-900/80"
           >
             <span>{isExpanded ? 'Thu gọn' : 'Chi tiết'}</span>
             {isExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}

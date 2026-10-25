@@ -1,6 +1,7 @@
 /**
  * Evaluation Metrics: Silhouette Score and Adjusted Rand Index (ARI).
  */
+import { DataValue } from '../types';
 
 export function computeSilhouetteScore(
   data: number[][],
@@ -47,7 +48,7 @@ export function computeSilhouetteScore(
     }
     const a = aSum / (sameCluster.length - 1);
 
-    // Calculate b(i): min mean distance to any other cluster
+    // Calculate b(i): minimum mean distance to another cluster
     let b = Infinity;
     clusterMap.forEach((otherIndices, otherC) => {
       if (otherC === c || otherIndices.length === 0) return;
@@ -75,7 +76,7 @@ export function computeSilhouetteScore(
 }
 
 export function computeARI(
-  groundTruth: (string | number)[],
+  groundTruth: DataValue[],
   predicted: number[]
 ): number | null {
   const n = groundTruth.length;
@@ -87,10 +88,10 @@ export function computeARI(
 
   if (rowLabels.length <= 1 || colLabels.length <= 1) return 0;
 
-  const rowMap = new Map<any, number>();
+  const rowMap = new Map<DataValue, number>();
   rowLabels.forEach((lbl, idx) => rowMap.set(lbl, idx));
 
-  const colMap = new Map<any, number>();
+  const colMap = new Map<number, number>();
   colLabels.forEach((lbl, idx) => colMap.set(lbl, idx));
 
   const table: number[][] = Array.from({ length: rowLabels.length }, () =>

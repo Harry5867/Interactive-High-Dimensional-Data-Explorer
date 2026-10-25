@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import Papa from 'papaparse';
 import {
   ParsedDataset,
   DataPoint,
+  DataValue,
   ReductionConfig,
   ClusteringConfig,
   ColorMode,
   EvaluationMetrics,
+  MIN_NUMERIC_FEATURES,
   ReductionMethod,
+  DatasetSummary,
 } from './types';
 import { parseCSVString, extractFeatureMatrix } from './utils/dataParser';
 import { computePCA } from './algorithms/pca';
@@ -18,22 +21,81 @@ import { computeKMeans } from './algorithms/kmeans';
 import { computeDBSCAN } from './algorithms/dbscan';
 import { computeSilhouetteScore, computeARI } from './algorithms/metrics';
 import { initLiveTSNE, stepLiveTSNE, LiveTSNEState } from './algorithms/liveOptimization';
-import { ThreeCanvas } from './components/ThreeCanvas';
 import { ControlSidebar } from './components/ControlSidebar';
+import type { SidebarTab } from './components/ControlSidebar';
 import { MetricsPanel } from './components/MetricsPanel';
 import { DataInspector } from './components/DataInspector';
-import { ExperimentsModal, ExperimentRecord } from './components/ExperimentsModal';
-import { ElbowModal } from './components/ElbowModal';
-import { SecurityModal } from './components/SecurityModal';
+import { ExperimentRecord } from './types';
+import {
+  getErrorMessage,
+  isComputeResult,
+  isDatasetDocument,
+  isDatasetSummary,
+  isExperimentRecord,
+  isRecord,
+} from './utils/typeGuards';
+
+const ThreeCanvas = lazy(() =>
+  import('./components/ThreeCanvas').then((module) => ({ default: module.ThreeCanvas }))
+);
+const ExperimentsModal = lazy(() =>
+  import('./components/ExperimentsModal').then((module) => ({ default: module.ExperimentsModal }))
+);
+const ElbowModal = lazy(() =>
+  import('./components/ElbowModal').then((module) => ({ default: module.ElbowModal }))
+);
+const SecurityModal = lazy(() =>
+  import('./components/SecurityModal').then((module) => ({ default: module.SecurityModal }))
+);
+
+type ReductionOutput = {
+  coordinates: [number, number, number][];
+  components?: number[][];
+  explainedVariance?: [number, number, number];
+  totalExplainedVariance?: number;
+};
 
 export function App() {
   const [dataset, setDataset] = useState<ParsedDataset | null>(null);
+  const [activeArea, setActiveArea] = useState<SidebarTab>('dataset');
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
   const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
+  const rawPreviewPoints = useMemo<DataPoint[]>(() => {
+    if (!dataset || selectedFeatures.length < MIN_NUMERIC_FEATURES) return [];
+
+    const axes = selectedFeatures.slice(0, 3);
+    const getAxisValue = (row: ParsedDataset['rawRows'][number], feature: string | undefined): number => {
+      if (!feature) return 0;
+      const value = row[feature];
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+        return Number(value);
+      }
+      return 0;
+    };
+
+    return dataset.rawRows.map((row, index) => {
+      const originalFeatures: Record<string, number> = {};
+      for (const feature of dataset.featureColumns) {
+        originalFeatures[feature] = getAxisValue(row, feature);
+      }
+
+      return {
+        id: (dataset.idColumn ? row[dataset.idColumn] : null) ?? index + 1,
+        label: dataset.labelColumn ? row[dataset.labelColumn] : undefined,
+        originalFeatures,
+        x: getAxisValue(row, axes[0]),
+        y: getAxisValue(row, axes[1]),
+        z: getAxisValue(row, axes[2]),
+        cluster: 0,
+      };
+    });
+  }, [dataset, selectedFeatures]);
   const [selectedPoint, setSelectedPoint] = useState<DataPoint | null>(null);
   const [isComputing, setIsComputing] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [dbStatus, setDbStatus] = useState<string>('Đang kiểm tra...');
+  const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   // Elbow Modal, Security Modal & PCA Biplot State
   const [isElbowModalOpen, setIsElbowModalOpen] = useState<boolean>(false);
@@ -91,16 +153,22 @@ export function App() {
     clusterCounts: {},
   });
 
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(null), 7000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
   // Check Database connection health periodically
   useEffect(() => {
     const checkDbHealth = async () => {
       try {
         const res = await fetch('/api/health');
         if (res.ok) {
-          const data = await res.json();
-          setDbStatus(data.database || 'Online');
+          const data: unknown = await res.json();
+          setDbStatus(isRecord(data) && typeof data.database === 'string' ? data.database : 'Online');
         }
-      } catch (e) {
+      } catch {
         setDbStatus('In-Memory Mode');
       }
     };
@@ -115,35 +183,46 @@ export function App() {
       setIsComputing(true);
       setLoadingMessage('Đang nạp dữ liệu từ MongoDB...');
       
-      const res = await fetch('/api/datasets');
-      if (res.ok) {
-        const datasetsList = await res.json();
-        if (datasetsList.length > 0) {
-          const firstId = datasetsList[0].id;
-          const detailRes = await fetch(`/api/datasets/${firstId}`);
-          if (detailRes.ok) {
-            const data = await detailRes.json();
-            const parsed: ParsedDataset = {
-              name: data.name,
-              totalRows: data.totalRows,
-              headers: Object.keys(data.rawRows[0] || {}),
-              idColumn: data.idColumn,
-              labelColumn: data.labelColumn,
-              featureColumns: data.features,
-              rawRows: data.rawRows,
-            };
-            setDataset(parsed);
-            setSelectedFeatures(parsed.featureColumns);
-            if (parsed.featureColumns.length > 0) {
-              setSelectedColorFeature(parsed.featureColumns[0]);
+      try {
+        const res = await fetch('/api/datasets');
+        if (res.ok) {
+          const datasetsList: unknown = await res.json();
+          if (Array.isArray(datasetsList)) {
+            const cancerDataset = datasetsList.find(
+              (item): item is DatasetSummary => isDatasetSummary(item) && item.id === 'cancer_wdbc'
+            );
+            if (cancerDataset) {
+              const detailRes = await fetch(`/api/datasets/${cancerDataset.id}`);
+              if (detailRes.ok) {
+                const data: unknown = await detailRes.json();
+                if (isDatasetDocument(data)) {
+                  const parsed: ParsedDataset = {
+                    name: data.name,
+                    totalRows: data.totalRows,
+                    headers: Object.keys(data.rawRows[0] || {}),
+                    idColumn: data.idColumn,
+                    labelColumn: data.labelColumn,
+                    featureColumns: data.features,
+                    rawRows: data.rawRows,
+                  };
+                  setDataset(parsed);
+                  setSelectedFeatures(parsed.featureColumns);
+                  if (parsed.featureColumns.length > 0) {
+                    setSelectedColorFeature(parsed.featureColumns[0]);
+                  }
+                  return;
+                }
+              }
             }
-            return;
           }
         }
+      } catch (apiError: unknown) {
+        console.warn('API dataset không khả dụng; dùng bộ dữ liệu local:', apiError);
       }
 
       // Fallback
       const staticRes = await fetch('/data.csv');
+      if (!staticRes.ok) throw new Error('Không thể tải bộ dữ liệu mẫu /data.csv.');
       const text = await staticRes.text();
       const parsed = parseCSVString(text, 'Wisconsin Breast Cancer');
       setDataset(parsed);
@@ -151,16 +230,9 @@ export function App() {
       if (parsed.featureColumns.length > 0) {
         setSelectedColorFeature(parsed.featureColumns[0]);
       }
-    } catch (err: any) {
-      console.warn('Lỗi kết nối API, dùng fallback local:', err);
-      const staticRes = await fetch('/data.csv');
-      const text = await staticRes.text();
-      const parsed = parseCSVString(text, 'Wisconsin Breast Cancer');
-      setDataset(parsed);
-      setSelectedFeatures(parsed.featureColumns);
-      if (parsed.featureColumns.length > 0) {
-        setSelectedColorFeature(parsed.featureColumns[0]);
-      }
+    } catch (err: unknown) {
+      console.error('Không thể nạp bộ dữ liệu ban đầu:', err);
+      setNotice({ type: 'error', message: `Không thể nạp dữ liệu mẫu: ${getErrorMessage(err)}` });
     } finally {
       setIsComputing(false);
       setLoadingMessage('');
@@ -175,43 +247,58 @@ export function App() {
   const handleFileUpload = async (file: File) => {
     try {
       setIsComputing(true);
-      setLoadingMessage('Đang tải file lên Backend & lưu vào MongoDB...');
+      setLoadingMessage('Đang kiểm tra cấu trúc CSV...');
+
+      const parsed = parseCSVString(await file.text(), file.name);
 
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('/api/datasets/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const parsed: ParsedDataset = {
-          name: data.name,
-          totalRows: data.totalRows,
-          headers: Object.keys(data.rawRows[0] || {}),
-          idColumn: data.idColumn,
-          labelColumn: data.labelColumn,
-          featureColumns: data.features,
-          rawRows: data.rawRows,
-        };
+      let res: Response;
+      try {
+        setLoadingMessage('Đang tải CSV lên máy chủ...');
+        res = await fetch('/api/datasets/upload', {
+          method: 'POST',
+          body: formData,
+        });
+      } catch (networkError: unknown) {
+        console.warn('Backend không kết nối được; dùng CSV đã kiểm tra trong trình duyệt:', networkError);
         setDataset(parsed);
         setSelectedFeatures(parsed.featureColumns);
-        if (parsed.featureColumns.length > 0) {
-          setSelectedColorFeature(parsed.featureColumns[0]);
-        }
-      } else {
-        const text = await file.text();
-        const parsed = parseCSVString(text, file.name);
-        setDataset(parsed);
-        setSelectedFeatures(parsed.featureColumns);
-        if (parsed.featureColumns.length > 0) {
-          setSelectedColorFeature(parsed.featureColumns[0]);
-        }
+        setSelectedColorFeature(parsed.featureColumns[0] ?? '');
+        setNotice({
+          type: 'info',
+          message: 'CSV hợp lệ và đã được mở trong trình duyệt. Máy chủ không kết nối được nên tệp chưa được lưu; chọn Cancer sẽ tải lại đúng bộ dữ liệu mẫu.',
+        });
+        return;
       }
-    } catch (err: any) {
-      alert('Lỗi tải file: ' + err.message);
+
+      if (!res.ok) {
+        const errorBody: unknown = await res.json().catch(() => null);
+        const message = isRecord(errorBody) && typeof errorBody.error === 'string'
+          ? errorBody.error
+          : `Máy chủ từ chối tệp CSV (HTTP ${res.status}).`;
+        throw new Error(message);
+      }
+
+      const data: unknown = await res.json();
+      if (!isDatasetDocument(data)) {
+        throw new Error('Máy chủ trả về dữ liệu CSV không đúng cấu trúc.');
+      }
+      setDataset({
+        name: data.name,
+        totalRows: data.totalRows,
+        headers: Object.keys(data.rawRows[0] || {}),
+        idColumn: data.idColumn,
+        labelColumn: data.labelColumn,
+        featureColumns: data.features,
+        rawRows: data.rawRows,
+      });
+      setSelectedFeatures(data.features);
+      setSelectedColorFeature(data.features[0] ?? '');
+      setNotice({ type: 'success', message: `Đã tải bộ dữ liệu "${data.name}" (${data.totalRows} dòng).` });
+    } catch (err: unknown) {
+      setNotice({ type: 'error', message: `Lỗi tải file: ${getErrorMessage(err)}` });
     } finally {
       setIsComputing(false);
       setLoadingMessage('');
@@ -220,19 +307,20 @@ export function App() {
 
   const handleLoadPreloaded = async (type: 'cancer' | 'wholesale' | 'synthetic') => {
     if (type === 'cancer') {
-      loadInitialDataset();
+      await loadInitialDataset();
     } else if (type === 'wholesale') {
       try {
         setIsComputing(true);
         setLoadingMessage('Đang nạp dữ liệu Wholesale...');
         const res = await fetch('/wholesale.csv');
+        if (!res.ok) throw new Error(`Không thể tải bộ dữ liệu Wholesale (HTTP ${res.status}).`);
         const text = await res.text();
         const parsed = parseCSVString(text, 'Wholesale Customers');
         setDataset(parsed);
         setSelectedFeatures(parsed.featureColumns);
-        if (parsed.featureColumns.length > 0) {
-          setSelectedColorFeature(parsed.featureColumns[0]);
-        }
+        setSelectedColorFeature(parsed.featureColumns[0] ?? '');
+      } catch (err: unknown) {
+        setNotice({ type: 'error', message: `Không thể nạp bộ dữ liệu mẫu: ${getErrorMessage(err)}` });
       } finally {
         setIsComputing(false);
         setLoadingMessage('');
@@ -254,7 +342,7 @@ export function App() {
     setSelectedFeatures([]);
   };
 
-  const computeCoordinates = (matrix: number[][], method: ReductionMethod) => {
+  const computeCoordinates = (matrix: number[][], method: ReductionMethod): ReductionOutput => {
     if (method === 'PCA') {
       return computePCA(matrix);
     } else if (method === 't-SNE') {
@@ -275,10 +363,10 @@ export function App() {
 
   // 3. Pipeline Calculation: Can execute via Backend API or locally
   const runPipeline = useCallback(async () => {
-    if (!dataset || selectedFeatures.length < 3) return;
+    if (!dataset || selectedFeatures.length < MIN_NUMERIC_FEATURES) return;
 
     setIsComputing(true);
-    setLoadingMessage('Đang tính toán giảm chiều & phân cụm 3D...');
+    setLoadingMessage(`Đang giảm chiều dữ liệu bằng ${reductionConfig.method}...`);
 
     await new Promise((r) => setTimeout(r, 40));
 
@@ -290,18 +378,14 @@ export function App() {
       );
       setFeatureMatrix(matrix);
 
-      const groundTruth = dataset.labelColumn
+      const groundTruth: DataValue[] = dataset.labelColumn
         ? dataset.rawRows.map((r) => r[dataset.labelColumn!])
         : [];
 
       let coordinates: [number, number, number][] = [];
       let clusterAssignments: number[] = [];
-      let sil: number | null = null;
-      let ari: number | null = null;
       let expVar: [number, number, number] | undefined = undefined;
       let totalExpVar: number | undefined = undefined;
-      let clusterCounts: Record<number, number> = {};
-      let noiseCount = 0;
       let wasFromBackend = false;
 
       // 1. Try Backend Compute API first (with SHA-256 Multi-Tier Caching & Gzip)
@@ -313,29 +397,30 @@ export function App() {
             matrix,
             groundTruth,
             reductionConfig,
-            clusteringConfig,
+            clusteringConfig: { ...clusteringConfig, method: 'None' },
           }),
         });
 
-        if (computeRes.ok) {
-          const computeData = await computeRes.json();
+        if (!computeRes.ok) {
+          throw new Error(`API tính toán trả về lỗi HTTP ${computeRes.status}.`);
+        }
+        const computeData: unknown = await computeRes.json();
+        if (!isComputeResult(computeData)) {
+          throw new Error('Máy chủ trả về kết quả tính toán không hợp lệ.');
+        }
           coordinates = computeData.coordinates;
-          clusterAssignments = computeData.clusterAssignments;
-          sil = computeData.silhouetteScore;
-          ari = computeData.adjustedRandIndex;
           expVar = computeData.explainedVariance;
           totalExpVar = computeData.totalExplainedVariance;
-          clusterCounts = computeData.clusterCounts || {};
-          noiseCount = computeData.noiseCount || 0;
+          clusterAssignments = new Array(coordinates.length).fill(0);
           if (computeData.components) {
             setPcaComponents(computeData.components);
           } else {
             setPcaComponents(undefined);
           }
           wasFromBackend = true;
-        }
-      } catch (err) {
-        // Fallback gracefully to client-side compute
+      } catch (err: unknown) {
+        console.warn('API tính toán không khả dụng, chuyển sang tính cục bộ:', err);
+        setNotice({ type: 'info', message: 'Backend chưa sẵn sàng; kết quả được tính trực tiếp trên trình duyệt.' });
       }
 
       // 2. Client-Side Fallback if Backend is unreachable
@@ -343,46 +428,30 @@ export function App() {
         const primaryRes = computeCoordinates(matrix, reductionConfig.method);
         coordinates = primaryRes.coordinates;
 
-        if (reductionConfig.method === 'PCA' && (primaryRes as any).components) {
-          setPcaComponents((primaryRes as any).components);
+        if (reductionConfig.method === 'PCA' && primaryRes.components) {
+          setPcaComponents(primaryRes.components);
         } else {
           setPcaComponents(undefined);
         }
 
-        if (clusteringConfig.method === 'K-Means') {
-          const kRes = computeKMeans(coordinates, clusteringConfig.k);
-          clusterAssignments = kRes.clusters;
-        } else if (clusteringConfig.method === 'DBSCAN') {
-          const dbRes = computeDBSCAN(coordinates, clusteringConfig.epsilon, clusteringConfig.minPts);
-          clusterAssignments = dbRes.clusters;
-          noiseCount = dbRes.noiseCount;
-        } else {
-          clusterAssignments = new Array(coordinates.length).fill(0);
-        }
+        clusterAssignments = new Array(coordinates.length).fill(0);
 
-        sil = computeSilhouetteScore(coordinates, clusterAssignments);
-        ari = dataset.labelColumn ? computeARI(groundTruth, clusterAssignments) : null;
-
-        for (const c of clusterAssignments) {
-          if (c >= 0) clusterCounts[c] = (clusterCounts[c] || 0) + 1;
-        }
-
-        expVar = (primaryRes as any).explainedVariance;
-        totalExpVar = (primaryRes as any).totalExplainedVariance;
+        expVar = primaryRes.explainedVariance;
+        totalExpVar = primaryRes.totalExplainedVariance;
       }
 
       setMetrics({
-        silhouetteScore: sil,
-        adjustedRandIndex: ari,
+        silhouetteScore: null,
+        adjustedRandIndex: null,
         explainedVariance: expVar,
         totalVarianceExplained: totalExpVar,
-        clusterCounts,
-        noiseCount,
+        clusterCounts: {},
+        noiseCount: 0,
       });
 
       // Assemble Primary DataPoints
       const points: DataPoint[] = dataset.rawRows.map((row, idx) => {
-        const id = dataset.idColumn ? row[dataset.idColumn] : idx + 1;
+        const id = (dataset.idColumn ? row[dataset.idColumn] : null) ?? idx + 1;
         const label = dataset.labelColumn ? row[dataset.labelColumn] : undefined;
 
         const originalFeatures: Record<string, number> = {};
@@ -411,7 +480,7 @@ export function App() {
       const secCoords = secondaryRes.coordinates;
 
       const dualPoints: DataPoint[] = dataset.rawRows.map((row, idx) => {
-        const id = dataset.idColumn ? row[dataset.idColumn] : idx + 1;
+        const id = (dataset.idColumn ? row[dataset.idColumn] : null) ?? idx + 1;
         const label = dataset.labelColumn ? row[dataset.labelColumn] : undefined;
 
         const originalFeatures: Record<string, number> = {};
@@ -433,9 +502,9 @@ export function App() {
       });
 
       setDualDataPoints(dualPoints);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      alert('Lỗi tính toán: ' + err.message);
+      setNotice({ type: 'error', message: `Lỗi tính toán: ${getErrorMessage(err)}` });
     } finally {
       setIsComputing(false);
       setLoadingMessage('');
@@ -443,10 +512,66 @@ export function App() {
   }, [dataset, selectedFeatures, reductionConfig, clusteringConfig, dualSecondaryMethod]);
 
   useEffect(() => {
-    if (dataset && selectedFeatures.length >= 3) {
-      runPipeline();
+    setDataPoints([]);
+    setDualDataPoints([]);
+    setSelectedPoint(null);
+    setPcaComponents(undefined);
+    setFeatureMatrix([]);
+    setMetrics({
+      silhouetteScore: null,
+      adjustedRandIndex: null,
+      clusterCounts: {},
+    });
+  }, [dataset, selectedFeatures, reductionConfig]);
+
+  const handleApplyClustering = (config: ClusteringConfig = clusteringConfig) => {
+    if (dataPoints.length === 0 || isComputing) return;
+
+    const coordinates = dataPoints.map((point) => [point.x, point.y, point.z] as [number, number, number]);
+    let clusterAssignments: number[];
+    let noiseCount = 0;
+
+    if (config.method === 'K-Means') {
+      clusterAssignments = computeKMeans(coordinates, config.k).clusters;
+    } else if (config.method === 'DBSCAN') {
+      const result = computeDBSCAN(coordinates, config.epsilon, config.minPts);
+      clusterAssignments = result.clusters;
+      noiseCount = result.noiseCount;
+    } else {
+      clusterAssignments = new Array(coordinates.length).fill(0);
     }
-  }, [dataset, runPipeline]);
+
+    const clusterCounts: Record<number, number> = {};
+    for (const cluster of clusterAssignments) {
+      if (cluster >= 0) clusterCounts[cluster] = (clusterCounts[cluster] || 0) + 1;
+    }
+
+    const groundTruth: DataValue[] = dataset?.labelColumn && dataset.rawRows.length === clusterAssignments.length
+      ? dataset.rawRows.map((row) => row[dataset.labelColumn!])
+      : [];
+    const silhouetteScore = computeSilhouetteScore(coordinates, clusterAssignments);
+    const adjustedRandIndex = groundTruth.length > 0
+      ? computeARI(groundTruth, clusterAssignments)
+      : null;
+
+    setDataPoints((points) => points.map((point, index) => ({
+      ...point,
+      cluster: clusterAssignments[index] ?? 0,
+    })));
+    setDualDataPoints((points) => points.map((point, index) => ({
+      ...point,
+      cluster: clusterAssignments[index] ?? 0,
+    })));
+    setMetrics((current) => ({
+      ...current,
+      silhouetteScore,
+      adjustedRandIndex,
+      clusterCounts,
+      noiseCount,
+    }));
+  };
+  const isRawDataArea = activeArea === 'dataset';
+  const displayedPoints = isRawDataArea ? rawPreviewPoints : dataPoints;
 
   // 4. LIVE OPTIMIZATION ANIMATION LOOP FOR t-SNE / UMAP
   const handleToggleLiveAnimation = () => {
@@ -454,7 +579,7 @@ export function App() {
       setIsLiveAnimating(false);
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     } else {
-      if (!dataset || selectedFeatures.length < 3) return;
+      if (!dataset || selectedFeatures.length < MIN_NUMERIC_FEATURES) return;
 
       if (!liveStateRef.current || liveStateRef.current.isCompleted) {
         const matrix = extractFeatureMatrix(
@@ -479,7 +604,7 @@ export function App() {
     setIsLiveAnimating(false);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
-    if (dataset && selectedFeatures.length >= 3) {
+    if (dataset && selectedFeatures.length >= MIN_NUMERIC_FEATURES) {
       const matrix = extractFeatureMatrix(
         dataset.rawRows,
         selectedFeatures,
@@ -568,12 +693,13 @@ export function App() {
           },
         }),
       });
-      if (res.ok) {
-        alert('✅ Đã lưu kết quả thí nghiệm thành công vào CSDL MongoDB!');
-        fetchExperiments();
+      if (!res.ok) {
+        throw new Error(`Máy chủ từ chối lưu thí nghiệm (HTTP ${res.status}).`);
       }
-    } catch (e: any) {
-      alert('Không thể lưu thí nghiệm: ' + e.message);
+      setNotice({ type: 'success', message: 'Đã lưu kết quả thí nghiệm thành công.' });
+      await fetchExperiments();
+    } catch (e: unknown) {
+      setNotice({ type: 'error', message: `Không thể lưu thí nghiệm: ${getErrorMessage(e)}` });
     } finally {
       setIsSavingExperiment(false);
     }
@@ -582,12 +708,17 @@ export function App() {
   const fetchExperiments = async () => {
     try {
       const res = await fetch('/api/experiments');
-      if (res.ok) {
-        const data = await res.json();
-        setExperiments(data);
+      if (!res.ok) {
+        throw new Error(`Không thể tải lịch sử (HTTP ${res.status}).`);
       }
-    } catch (e) {
-      console.error(e);
+      const data: unknown = await res.json();
+      if (!Array.isArray(data) || !data.every(isExperimentRecord)) {
+        throw new Error('Dữ liệu lịch sử từ máy chủ không đúng định dạng.');
+      }
+      setExperiments(data);
+    } catch (e: unknown) {
+      console.error('Không thể tải lịch sử thí nghiệm:', e);
+      setNotice({ type: 'error', message: `Không thể tải lịch sử: ${getErrorMessage(e)}` });
     }
   };
 
@@ -621,17 +752,42 @@ export function App() {
       link.download = `${dataset.name.replace(/\s+/g, '_')}_3D_Clustered_Results.csv`;
       link.click();
       URL.revokeObjectURL(url);
-    } catch (e: any) {
-      alert('Lỗi xuất file CSV: ' + e.message);
+    } catch (e: unknown) {
+      setNotice({ type: 'error', message: `Lỗi xuất file CSV: ${getErrorMessage(e)}` });
     }
   };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100 select-none">
+      {notice && (
+        <div
+          role={notice.type === 'error' ? 'alert' : 'status'}
+          aria-live={notice.type === 'error' ? 'assertive' : 'polite'}
+          className={`absolute top-4 right-4 z-[70] flex max-w-md items-start gap-3 rounded-xl border px-4 py-3 text-sm shadow-2xl backdrop-blur-md ${
+            notice.type === 'error'
+              ? 'border-rose-500/40 bg-rose-950/95 text-rose-100'
+              : notice.type === 'success'
+                ? 'border-emerald-500/40 bg-emerald-950/95 text-emerald-100'
+                : 'border-indigo-500/40 bg-slate-900/95 text-slate-100'
+          }`}
+        >
+          <span className="flex-1">{notice.message}</span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="shrink-0 rounded px-1 text-current/70 hover:text-current focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            aria-label="Đóng thông báo"
+          >
+            ×
+          </button>
+        </div>
+      )}
       {/* 1. Control Sidebar */}
       <ControlSidebar
         datasetName={dataset ? dataset.name : 'Đang tải...'}
         totalRows={dataset ? dataset.totalRows : 0}
+        rawRows={dataset?.rawRows ?? []}
+        headers={dataset?.headers ?? []}
         featureColumns={dataset ? dataset.featureColumns : []}
         selectedFeatures={selectedFeatures}
         onToggleFeature={handleToggleFeature}
@@ -648,7 +804,10 @@ export function App() {
         onFileUpload={handleFileUpload}
         onLoadPreloadedDataset={handleLoadPreloaded}
         isComputing={isComputing}
+        hasResults={dataPoints.length > 0}
+        onActiveTabChange={setActiveArea}
         onRunComputation={runPipeline}
+        onApplyClustering={handleApplyClustering}
         isDualView={isDualView}
         onToggleDualView={() => setIsDualView(!isDualView)}
         dualSecondaryMethod={dualSecondaryMethod}
@@ -676,43 +835,68 @@ export function App() {
       />
 
       {/* 2. Main 3D Viewport Area */}
-      <div className="flex-1 relative flex flex-col h-full overflow-hidden">
+      <div className="flex-1 min-w-0 relative flex flex-col h-full overflow-hidden">
         {/* Single vs Dual Viewport Rendering */}
-        <div className="flex-1 w-full h-full flex">
+        <div className="min-h-0 flex-1 w-full flex">
           {/* Viewport 1 (Primary) */}
           <div className="flex-1 h-full relative">
-            <ThreeCanvas
-              dataPoints={dataPoints}
-              colorMode={colorMode}
-              selectedFeature={selectedColorFeature}
-              onSelectPoint={setSelectedPoint}
-              selectedPoint={selectedPoint}
-              reductionMethod={reductionConfig.method}
-              onCameraChange={handlePrimaryCameraChange}
-              titleBadge={isDualView ? `MÀN HÌNH A: ${reductionConfig.method} 3D` : undefined}
-              pcaComponents={pcaComponents}
-              featureNames={selectedFeatures}
-              showBiplot={biplotVisible}
-              onToggleBiplot={() => setBiplotVisible(!biplotVisible)}
-              biplotTopK={biplotTopK}
-              biplotScale={biplotScale}
-            />
+            {displayedPoints.length > 0 ? (
+              <Suspense
+                fallback={
+                  <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400" role="status">
+                    Đang tải bộ máy đồ họa 3D...
+                  </div>
+                }
+              >
+                <ThreeCanvas
+                  dataPoints={displayedPoints}
+                  colorMode={colorMode}
+                  selectedFeature={selectedColorFeature}
+                  onSelectPoint={setSelectedPoint}
+                  selectedPoint={selectedPoint}
+                  reductionMethod={isRawDataArea ? 'RAW' : reductionConfig.method}
+                  onCameraChange={handlePrimaryCameraChange}
+                  titleBadge={isRawDataArea ? 'DỮ LIỆU GỐC' : isDualView ? `MÀN HÌNH A: ${reductionConfig.method} 3D` : undefined}
+                  axisFeatures={isRawDataArea ? selectedFeatures.slice(0, 3) : undefined}
+                  pcaComponents={isRawDataArea ? undefined : pcaComponents}
+                  featureNames={selectedFeatures}
+                  showBiplot={biplotVisible}
+                  onToggleBiplot={() => setBiplotVisible(!biplotVisible)}
+                  biplotTopK={biplotTopK}
+                  biplotScale={biplotScale}
+                />
+              </Suspense>
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-slate-500">
+                {dataset
+                  ? 'Chọn ít nhất 3 đặc trưng số để xem dữ liệu gốc trên biểu đồ 3D.'
+                  : 'Chọn dữ liệu để xem trước dữ liệu gốc.'}
+              </div>
+            )}
           </div>
 
           {/* Viewport 2 (Dual Secondary with Camera Synchronization) */}
-          {isDualView && (
+          {isDualView && !isRawDataArea && (
             <div className="flex-1 h-full relative border-l-2 border-indigo-600/50">
-              <ThreeCanvas
-                dataPoints={dualDataPoints.length > 0 ? dualDataPoints : dataPoints}
-                colorMode={colorMode}
-                selectedFeature={selectedColorFeature}
-                onSelectPoint={setSelectedPoint}
-                selectedPoint={selectedPoint}
-                reductionMethod={dualSecondaryMethod}
-                syncCameraPos={syncedCamPos}
-                syncTargetPos={syncedTargetPos}
-                titleBadge={`MÀN HÌNH B: ${dualSecondaryMethod} 3D (Đồng bộ)`}
-              />
+              <Suspense
+                fallback={
+                  <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400" role="status">
+                    Đang tải bộ máy đồ họa 3D...
+                  </div>
+                }
+              >
+                <ThreeCanvas
+                  dataPoints={dualDataPoints.length > 0 ? dualDataPoints : dataPoints}
+                  colorMode={colorMode}
+                  selectedFeature={selectedColorFeature}
+                  onSelectPoint={setSelectedPoint}
+                  selectedPoint={selectedPoint}
+                  reductionMethod={dualSecondaryMethod}
+                  syncCameraPos={syncedCamPos}
+                  syncTargetPos={syncedTargetPos}
+                  titleBadge={`MÀN HÌNH B: ${dualSecondaryMethod} 3D (Đồng bộ)`}
+                />
+              </Suspense>
             </div>
           )}
         </div>
@@ -733,12 +917,13 @@ export function App() {
           onClose={() => setSelectedPoint(null)}
         />
 
-        {/* Bottom Floating Compact Metrics Panel */}
-        <div className="absolute bottom-4 left-4 right-4 z-20 pointer-events-none">
+        {/* Docked metrics stay outside the interactive canvas area. */}
+        <div className="shrink-0 border-t border-slate-800/80 bg-slate-950/90 px-3 py-2">
           <MetricsPanel
             metrics={metrics}
             reductionMethod={reductionConfig.method}
             hasGroundTruth={Boolean(dataset?.labelColumn)}
+            hasResults={dataPoints.length > 0}
             onSaveExperiment={handleSaveExperiment}
             onOpenHistory={handleOpenHistory}
             isSaving={isSavingExperiment}
@@ -747,42 +932,55 @@ export function App() {
       </div>
 
       {/* Experiments History Modal */}
-      <ExperimentsModal
-        isOpen={isExperimentsModalOpen}
-        onClose={() => setIsExperimentsModalOpen(false)}
-        experiments={experiments}
-        onRefresh={fetchExperiments}
-      />
+      {isExperimentsModalOpen && (
+        <Suspense fallback={null}>
+          <ExperimentsModal
+            isOpen={isExperimentsModalOpen}
+            onClose={() => setIsExperimentsModalOpen(false)}
+            experiments={experiments}
+            onRefresh={fetchExperiments}
+          />
+        </Suspense>
+      )}
 
       {/* Elbow Method & Silhouette Analysis Modal */}
-      <ElbowModal
-        isOpen={isElbowModalOpen}
-        onClose={() => setIsElbowModalOpen(false)}
-        featureMatrix={featureMatrix.length > 0 ? featureMatrix : (dataset ? extractFeatureMatrix(dataset.rawRows, selectedFeatures, reductionConfig.normalization) : [])}
-        currentK={clusteringConfig.k}
-        onApplyK={(k) => {
-          setClusteringConfig((prev) => ({ ...prev, k }));
-          setTimeout(() => runPipeline(), 60);
-        }}
-      />
+      {isElbowModalOpen && (
+        <Suspense fallback={null}>
+          <ElbowModal
+            isOpen={isElbowModalOpen}
+            onClose={() => setIsElbowModalOpen(false)}
+            featureMatrix={featureMatrix.length > 0 ? featureMatrix : (dataset ? extractFeatureMatrix(dataset.rawRows, selectedFeatures, reductionConfig.normalization) : [])}
+            currentK={clusteringConfig.k}
+            onApplyK={(k) => {
+              const updatedConfig = { ...clusteringConfig, k };
+              setClusteringConfig(updatedConfig);
+              if (dataPoints.length > 0) handleApplyClustering(updatedConfig);
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Security Center & LAN Sharing Modal */}
-      <SecurityModal
-        isOpen={isSecurityModalOpen}
-        onClose={() => setIsSecurityModalOpen(false)}
-        dbStatus={dbStatus}
-        onRefreshDb={async () => {
-          try {
-            const res = await fetch('/api/health');
-            if (res.ok) {
-              const data = await res.json();
-              setDbStatus(data.database || 'Online');
-            }
-          } catch (e) {
-            setDbStatus('In-Memory Mode');
-          }
-        }}
-      />
+      {isSecurityModalOpen && (
+        <Suspense fallback={null}>
+          <SecurityModal
+            isOpen={isSecurityModalOpen}
+            onClose={() => setIsSecurityModalOpen(false)}
+            dbStatus={dbStatus}
+            onRefreshDb={async () => {
+              try {
+                const res = await fetch('/api/health');
+                if (res.ok) {
+                  const data = await res.json();
+                  setDbStatus(data.database || 'Online');
+                }
+              } catch (e) {
+                setDbStatus('In-Memory Mode');
+              }
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

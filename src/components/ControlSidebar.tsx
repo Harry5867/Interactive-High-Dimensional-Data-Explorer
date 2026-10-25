@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ReductionMethod,
   ClusteringMethod,
@@ -6,6 +6,9 @@ import {
   NormalizationMethod,
   ReductionConfig,
   ClusteringConfig,
+  DatasetRow,
+  DataValue,
+  MIN_NUMERIC_FEATURES,
 } from '../types';
 import {
   Upload,
@@ -31,6 +34,8 @@ import {
   BarChart3,
   Compass,
   Award,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { TooltipSlider } from './TooltipSlider';
 
@@ -39,6 +44,8 @@ export type SidebarTab = 'reduction' | 'clustering' | 'dataset' | 'display';
 interface ControlSidebarProps {
   datasetName: string;
   totalRows: number;
+  rawRows: DatasetRow[];
+  headers: string[];
   featureColumns: string[];
   selectedFeatures: string[];
   onToggleFeature: (feature: string) => void;
@@ -55,7 +62,10 @@ interface ControlSidebarProps {
   onFileUpload: (file: File) => void;
   onLoadPreloadedDataset: (type: 'cancer' | 'wholesale' | 'synthetic') => void;
   isComputing: boolean;
+  hasResults: boolean;
+  onActiveTabChange: (tab: SidebarTab) => void;
   onRunComputation: () => void;
+  onApplyClustering: () => void;
   // Dual View Mode
   isDualView: boolean;
   onToggleDualView: () => void;
@@ -88,6 +98,8 @@ interface ControlSidebarProps {
 export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   datasetName,
   totalRows,
+  rawRows,
+  headers,
   featureColumns,
   selectedFeatures,
   onToggleFeature,
@@ -104,7 +116,10 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   onFileUpload,
   onLoadPreloadedDataset,
   isComputing,
+  hasResults,
+  onActiveTabChange,
   onRunComputation,
+  onApplyClustering,
   isDualView,
   onToggleDualView,
   dualSecondaryMethod,
@@ -128,17 +143,19 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   biplotScale = 30,
   onChangeBiplotScale,
 }) => {
-  const [activeTab, setActiveTab] = useState<SidebarTab>('reduction');
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [activeTab, setActiveTab] = useState<SidebarTab>('dataset');
   const [selectedPcaTab, setSelectedPcaTab] = useState<'PC1' | 'PC2' | 'PC3' | 'All'>('PC1');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    onActiveTabChange(activeTab);
+  }, [activeTab, onActiveTabChange]);
 
   // Compute Top 5 Feature Loadings for PCA
   const topLoadings = React.useMemo(() => {
     if (!pcaComponents || pcaComponents.length < 3 || selectedFeatures.length === 0) {
-      return selectedFeatures.slice(0, 5).map((f, i) => ({
-        name: f,
-        loading: 0.35 - i * 0.05,
-      }));
+      return [];
     }
 
     const v1 = pcaComponents[0];
@@ -166,14 +183,54 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       onFileUpload(e.target.files[0]);
+      e.target.value = '';
     }
   };
 
   const isAtlas = dbStatus.includes('Connected') || dbStatus.includes('Atlas');
+  const tabGuidance: Record<SidebarTab, string> = {
+    dataset: 'Chọn bộ dữ liệu và ít nhất 3 đặc trưng số để phân tích.',
+    reduction: 'Thiết lập phép chiếu 3D độc lập (PCA, t-SNE hoặc UMAP) và chuẩn hóa dữ liệu.',
+    clustering: 'Thiết lập thuật toán phân cụm riêng. Bạn có thể cấu hình mục này trước hoặc sau khi chọn phép chiếu.',
+    display: 'Khám phá biểu đồ, so sánh hai phép chiếu và xuất kết quả.',
+  };
+  const tabLabels: Record<SidebarTab, string> = {
+    dataset: 'Dữ liệu',
+    reduction: 'Giảm chiều',
+    clustering: 'Phân cụm',
+    display: 'Hiển thị',
+  };
+  const canOpenReduction = selectedFeatures.length >= MIN_NUMERIC_FEATURES && !isComputing;
+  const canOpenClustering = selectedFeatures.length >= MIN_NUMERIC_FEATURES && !isComputing;
+  const handleTabChange = (value: string) => {
+    if (value === 'dataset') setActiveTab('dataset');
+    else if (value === 'reduction' && canOpenReduction) setActiveTab('reduction');
+    else if (value === 'clustering' && canOpenClustering) setActiveTab('clustering');
+    else if (value === 'display' && hasResults && !isComputing) setActiveTab('display');
+  };
+  if (isCollapsed) {
+    return (
+      <aside className="flex h-full w-14 shrink-0 flex-col items-center gap-3 border-r border-slate-800 bg-slate-900/95 py-3 text-slate-200">
+        <button
+          type="button"
+          onClick={() => setIsCollapsed(false)}
+          aria-label="Mở rộng bảng điều khiển"
+          title="Mở rộng bảng điều khiển"
+          className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-indigo-300 transition-colors hover:bg-slate-800 hover:text-white"
+        >
+          <PanelLeftOpen size={18} />
+        </button>
+        <span className="mt-1 h-2 w-2 rounded-full bg-emerald-400" title={datasetName} />
+        <span className="text-[10px] font-mono text-slate-400 [writing-mode:vertical-rl]">
+          {totalRows.toLocaleString('vi-VN')} mẫu
+        </span>
+      </aside>
+    );
+  }
 
   return (
-    <div className="w-80 md:w-96 h-full flex flex-col bg-slate-900/95 border-r border-slate-800 text-slate-200 overflow-hidden select-none">
-      {/* 1. Header with App Title & Global Compute Button */}
+    <aside className="relative z-30 flex h-full w-72 shrink-0 flex-col overflow-hidden border-r border-slate-800 bg-slate-900/95 text-slate-200 select-none transition-[width] duration-200 md:w-80">
+      {/* 1. Header with App Title */}
       <div className="p-3.5 border-b border-slate-800 bg-slate-950/60 space-y-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -187,12 +244,13 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           </div>
 
           <button
-            onClick={onRunComputation}
-            disabled={isComputing || selectedFeatures.length < 3}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50"
+            type="button"
+            onClick={() => setIsCollapsed(true)}
+            aria-label="Thu gọn bảng điều khiển"
+            title="Thu gọn để mở rộng biểu đồ"
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
           >
-            <RefreshCw size={13} className={isComputing ? 'animate-spin' : ''} />
-            <span>{isComputing ? 'Đang tính...' : 'Tính toán'}</span>
+            <PanelLeftClose size={16} />
           </button>
         </div>
 
@@ -217,70 +275,43 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           )}
         </div>
 
-        {/* 2. MENU NAVIGATION TABS BAR (Tách bạch các tính năng) */}
-        <div className="grid grid-cols-4 p-1 rounded-xl bg-slate-950/90 border border-slate-800 text-[11px] font-semibold">
-          <button
-            onClick={() => setActiveTab('reduction')}
-            title="Module Giảm chiều 3D (PCA, t-SNE, UMAP)"
-            className={`flex flex-col items-center justify-center py-1.5 rounded-lg transition-all ${
-              activeTab === 'reduction'
-                ? 'bg-indigo-600 text-white shadow shadow-indigo-600/40 font-bold'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
+        {/* Independent feature selector */}
+        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/90 px-2.5 py-1.5">
+          <span className="shrink-0 rounded-md bg-indigo-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-300">
+            Khu vực
+          </span>
+          <label className="sr-only" htmlFor="feature-area">Chọn chức năng</label>
+          <select
+            id="feature-area"
+            value={activeTab}
+            onChange={(event) => handleTabChange(event.target.value)}
+            className="min-w-0 flex-1 cursor-pointer rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-slate-100 outline-none transition-colors focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/30"
           >
-            <Layers size={14} className="mb-0.5" />
-            <span>Giảm chiều</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('clustering')}
-            title="Module Phân cụm 3D (K-Means, DBSCAN, Elbow)"
-            className={`flex flex-col items-center justify-center py-1.5 rounded-lg transition-all ${
-              activeTab === 'clustering'
-                ? 'bg-indigo-600 text-white shadow shadow-indigo-600/40 font-bold'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <Sliders size={14} className="mb-0.5" />
-            <span>Phân cụm</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('dataset')}
-            title="Module Quản lý Dữ liệu & Đặc trưng"
-            className={`flex flex-col items-center justify-center py-1.5 rounded-lg transition-all ${
-              activeTab === 'dataset'
-                ? 'bg-indigo-600 text-white shadow shadow-indigo-600/40 font-bold'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <Database size={14} className="mb-0.5" />
-            <span>Dữ liệu</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('display')}
-            title="Module Hiển thị, Màn hình đôi & Xuất file"
-            className={`flex flex-col items-center justify-center py-1.5 rounded-lg transition-all ${
-              activeTab === 'display'
-                ? 'bg-indigo-600 text-white shadow shadow-indigo-600/40 font-bold'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <Palette size={14} className="mb-0.5" />
-            <span>Hiển thị</span>
-          </button>
+            <option value="dataset">Dữ liệu</option>
+            <option value="reduction" disabled={!canOpenReduction}>Giảm chiều (PCA / t-SNE / UMAP)</option>
+            <option value="clustering" disabled={!canOpenClustering}>Phân cụm</option>
+            <option value="display" disabled={!hasResults || isComputing}>Hiển thị & xuất dữ liệu</option>
+          </select>
         </div>
       </div>
 
       {/* 3. SCROLLABLE TAB CONTENT AREA */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar text-xs">
+      <div className="flex-1 overflow-y-auto p-5 space-y-6 custom-scrollbar text-xs">
+        <div className="rounded-2xl border border-indigo-500/25 bg-gradient-to-br from-indigo-950/50 to-slate-950/40 px-4 py-3.5 shadow-sm shadow-indigo-950/30">
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-indigo-300">
+            {tabLabels[activeTab]}
+          </p>
+          <p className="text-[13px] font-semibold leading-relaxed text-slate-100">{tabGuidance[activeTab]}</p>
+          <p className="mt-2 truncate text-[10px] text-slate-400" title={datasetName}>
+            Hiện tại: {datasetName} · {totalRows.toLocaleString('vi-VN')} mẫu · {selectedFeatures.length} đặc trưng
+          </p>
+        </div>
 
         {/* ======================================================== */}
         {/* TAB 1: GIẢM CHIỀU (DIMENSIONALITY REDUCTION)             */}
         {/* ======================================================== */}
         {activeTab === 'reduction' && (
-          <div className="space-y-4 animate-fade-in">
+          <div className="space-y-5 animate-fade-in">
             {/* Header info */}
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <span className="font-bold text-indigo-400 text-xs flex items-center gap-1.5">
@@ -315,7 +346,16 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
 
             {/* Algorithm Description & Parameters */}
             {reductionConfig.method === 'PCA' && (
-              <div className="space-y-3.5">
+              <details className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+                <summary className="cursor-pointer list-none text-xs font-semibold text-indigo-200 marker:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">
+                  <span className="flex items-center justify-between gap-2">
+                    <span>Phân tích PCA & đặc trưng</span>
+                    <span className="font-mono text-emerald-300">
+                      {totalVarianceExplained !== undefined ? `${(totalVarianceExplained * 100).toFixed(1)}%` : 'Chưa chạy'}
+                    </span>
+                  </span>
+                </summary>
+                <div className="space-y-3.5 pt-3">
                 {/* 1. EXPLAINED VARIANCE / SCREE PLOT CARD */}
                 <div className="p-3.5 rounded-xl bg-slate-950/70 border border-indigo-500/30 space-y-3 shadow-lg">
                   <div className="flex items-center justify-between">
@@ -323,7 +363,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                       <BarChart3 size={15} className="text-indigo-400" /> Tỷ lệ giải thích phương sai (Scree)
                     </span>
                     <span className="font-mono text-emerald-400 text-xs font-bold bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-md">
-                      Tổng: {totalVarianceExplained ? `${(totalVarianceExplained * 100).toFixed(1)}%` : '72.6%'}
+                      Tổng: {totalVarianceExplained !== undefined ? `${(totalVarianceExplained * 100).toFixed(1)}%` : 'Chưa có kết quả'}
                     </span>
                   </div>
 
@@ -332,13 +372,13 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     <div className="flex justify-between text-[10px] text-slate-400 font-mono">
                       <span>Bảo toàn cấu trúc 30D → 3D</span>
                       <span className="text-indigo-300 font-bold">
-                        {totalVarianceExplained ? `${(totalVarianceExplained * 100).toFixed(1)}%` : '72.6%'}
+                        {totalVarianceExplained !== undefined ? `${(totalVarianceExplained * 100).toFixed(1)}%` : 'Chưa chạy'}
                       </span>
                     </div>
                     <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden p-0.5 border border-slate-700/60">
                       <div
                         style={{
-                          width: `${Math.min(100, (totalVarianceExplained ? totalVarianceExplained * 100 : 72.6))}%`,
+                          width: `${Math.min(100, totalVarianceExplained !== undefined ? totalVarianceExplained * 100 : 0)}%`,
                         }}
                         className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full transition-all duration-300 shadow-sm"
                       />
@@ -350,7 +390,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     <div className="p-2 rounded-lg bg-slate-900/90 border border-indigo-500/20 text-center">
                       <div className="text-[10px] text-indigo-300 font-bold">PC1 (Trục X)</div>
                       <div className="text-sm font-mono font-bold text-white mt-0.5">
-                        {explainedVariance ? `${(explainedVariance[0] * 100).toFixed(1)}%` : '44.3%'}
+                        {explainedVariance ? `${(explainedVariance[0] * 100).toFixed(1)}%` : '—'}
                       </div>
                       <div className="text-[9px] text-slate-400 truncate">Chính yếu</div>
                     </div>
@@ -358,7 +398,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     <div className="p-2 rounded-lg bg-slate-900/90 border border-purple-500/20 text-center">
                       <div className="text-[10px] text-purple-300 font-bold">PC2 (Trục Y)</div>
                       <div className="text-sm font-mono font-bold text-white mt-0.5">
-                        {explainedVariance ? `${(explainedVariance[1] * 100).toFixed(1)}%` : '19.0%'}
+                        {explainedVariance ? `${(explainedVariance[1] * 100).toFixed(1)}%` : '—'}
                       </div>
                       <div className="text-[9px] text-slate-400 truncate">Thứ cấp</div>
                     </div>
@@ -366,7 +406,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     <div className="p-2 rounded-lg bg-slate-900/90 border border-pink-500/20 text-center">
                       <div className="text-[10px] text-pink-300 font-bold">PC3 (Trục Z)</div>
                       <div className="text-sm font-mono font-bold text-white mt-0.5">
-                        {explainedVariance ? `${(explainedVariance[2] * 100).toFixed(1)}%` : '9.3%'}
+                        {explainedVariance ? `${(explainedVariance[2] * 100).toFixed(1)}%` : '—'}
                       </div>
                       <div className="text-[9px] text-slate-400 truncate">Bổ trợ</div>
                     </div>
@@ -398,6 +438,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
 
                   {/* List Top 5 features */}
                   <div className="space-y-1.5 pt-1">
+                    {topLoadings.length === 0 && (
+                      <p className="text-[11px] text-slate-500">
+                        Chạy giảm chiều PCA để xem đặc trưng đóng góp.
+                      </p>
+                    )}
                     {topLoadings.map((feat, idx) => {
                       const isPositive = feat.loading >= 0;
                       const absPct = Math.min(100, Math.abs(feat.loading) * 200);
@@ -482,7 +527,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                     </div>
                   )}
                 </div>
-              </div>
+                </div>
+              </details>
             )}
 
             {reductionConfig.method === 't-SNE' && (
@@ -494,6 +540,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   Thuật toán phi tuyến cực mạnh trong việc phát hiện các cụm cụ bộ (local clusters).
                 </p>
 
+                <details className="rounded-lg border border-slate-800 bg-slate-950/50 p-2.5">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">
+                    Tùy chỉnh tham số nâng cao
+                  </summary>
+                  <div className="space-y-3 pt-3">
                 {/* Perplexity Slider */}
                 <TooltipSlider
                   label="Độ phức tạp (Perplexity)"
@@ -530,6 +581,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   minLabel="Min: 100"
                   maxLabel="Max: 1000"
                 />
+                  </div>
+                </details>
               </div>
             )}
 
@@ -542,6 +595,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   Cân bằng xuất sắc giữa việc bảo toàn cấu trúc lân cận cục bộ và phân bố toàn cục của đám mây điểm.
                 </p>
 
+                <details className="rounded-lg border border-slate-800 bg-slate-950/50 p-2.5">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">
+                    Tùy chỉnh tham số nâng cao
+                  </summary>
+                  <div className="space-y-3 pt-3">
                 {/* nNeighbors Slider */}
                 <TooltipSlider
                   label="Số láng giềng (nNeighbors)"
@@ -578,6 +636,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   minLabel="Min: 0.01"
                   maxLabel="Max: 0.80"
                 />
+                  </div>
+                </details>
               </div>
             )}
 
@@ -603,7 +663,9 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={onToggleLiveAnimation}
-                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg font-semibold text-xs transition-all ${
+                    disabled={isComputing || (!hasResults && !isLiveAnimating)}
+                    title={!hasResults ? 'Chạy giảm chiều t-SNE/UMAP trước để tạo biểu đồ.' : undefined}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg font-semibold text-xs transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
                       isLiveAnimating
                         ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
                         : 'bg-indigo-600 hover:bg-indigo-500 text-white'
@@ -615,8 +677,9 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
 
                   <button
                     onClick={onResetLiveAnimation}
+                    disabled={!hasResults || isComputing}
                     title="Đặt lại các điểm về vị trí ngẫu nhiên"
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <RotateCcw size={14} />
                   </button>
@@ -627,7 +690,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
             {/* Normalization Mode */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-semibold text-slate-400">
-                Phương pháp chuẩn hóa trước khi giảm chiều:
+                Chuẩn hóa dữ liệu trước khi giảm chiều:
               </label>
               <div className="grid grid-cols-3 gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
                 {(['z-score', 'min-max', 'none'] as NormalizationMethod[]).map((method) => (
@@ -653,7 +716,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow-lg shadow-indigo-600/30"
             >
               <RefreshCw size={14} className={isComputing ? 'animate-spin' : ''} />
-              <span>Cập nhật Giảm chiều 3D ({reductionConfig.method})</span>
+              <span>Chạy giảm chiều bằng {reductionConfig.method}</span>
             </button>
           </div>
         )}
@@ -662,7 +725,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
         {/* TAB 2: PHÂN CỤM (CLUSTERING)                             */}
         {/* ======================================================== */}
         {activeTab === 'clustering' && (
-          <div className="space-y-4 animate-fade-in">
+          <div className="space-y-5 animate-fade-in">
             {/* Header info */}
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <span className="font-bold text-amber-400 text-xs flex items-center gap-1.5">
@@ -740,6 +803,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   <Info size={14} /> Phân cụm dựa trên mật độ (DBSCAN)
                 </div>
 
+                <details className="rounded-lg border border-slate-800 bg-slate-950/50 p-2.5">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400">
+                    Tùy chỉnh tham số nâng cao
+                  </summary>
+                  <div className="space-y-3 pt-3">
                 <TooltipSlider
                   label="Bán kính lân cận (Epsilon)"
                   min={0.5}
@@ -775,6 +843,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   minLabel="Min: 2"
                   maxLabel="Max: 20"
                 />
+                  </div>
+                </details>
 
                 <p className="text-[11px] text-slate-400 leading-relaxed">
                   Các điểm nằm ngoài mật độ lân cận sẽ được gán nhãn là <strong>Điểm nhiễu (Noise)</strong> màu xám.
@@ -790,12 +860,13 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
 
             {/* Quick Run Button */}
             <button
-              onClick={onRunComputation}
-              disabled={isComputing}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold transition-all shadow-lg shadow-amber-600/30"
+              onClick={onApplyClustering}
+              disabled={isComputing || !hasResults}
+              title={!hasResults ? 'Chạy giảm chiều trước để tạo tọa độ 3D, sau đó mới áp dụng phân cụm.' : 'Phân cụm trên tọa độ 3D hiện tại'}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold transition-all shadow-lg shadow-amber-600/30 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <RefreshCw size={14} className={isComputing ? 'animate-spin' : ''} />
-              <span>Áp dụng Phân cụm ({clusteringConfig.method})</span>
+              <span>{hasResults ? `Áp dụng Phân cụm (${clusteringConfig.method})` : 'Chạy giảm chiều trước để phân cụm'}</span>
             </button>
           </div>
         )}
@@ -804,7 +875,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
         {/* TAB 3: DỮ LIỆU & ĐẶC TRƯNG (DATASET & FEATURES)         */}
         {/* ======================================================== */}
         {activeTab === 'dataset' && (
-          <div className="space-y-4 animate-fade-in">
+          <div className="space-y-5 animate-fade-in">
             {/* Header info */}
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <span className="font-bold text-emerald-400 text-xs flex items-center gap-1.5">
@@ -820,10 +891,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               <label className="text-[11px] font-semibold text-slate-300">
                 Bộ dữ liệu mẫu sẵn có:
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2.5">
                 <button
                   onClick={() => onLoadPreloadedDataset('cancer')}
-                  className={`p-2.5 text-left rounded-xl border transition-all ${
+                  disabled={isComputing}
+                  className={`p-3 text-left rounded-xl border transition-all ${
                     datasetName.includes('Cancer')
                       ? 'bg-indigo-600/20 border-indigo-500 shadow-sm'
                       : 'bg-slate-800/80 hover:bg-slate-700/80 border-slate-700'
@@ -834,7 +906,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 </button>
                 <button
                   onClick={() => onLoadPreloadedDataset('wholesale')}
-                  className={`p-2.5 text-left rounded-xl border transition-all ${
+                  disabled={isComputing}
+                  className={`p-3 text-left rounded-xl border transition-all ${
                     datasetName.includes('Wholesale')
                       ? 'bg-indigo-600/20 border-indigo-500 shadow-sm'
                       : 'bg-slate-800/80 hover:bg-slate-700/80 border-slate-700'
@@ -860,7 +933,9 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border border-dashed border-indigo-500/50 hover:border-indigo-400 bg-indigo-950/20 hover:bg-indigo-950/40 text-indigo-300 font-medium transition-all"
+                disabled={isComputing}
+                aria-label="Chọn tệp CSV từ máy tính"
+                className="w-full flex items-center justify-center gap-2 py-3 px-3.5 rounded-xl border border-dashed border-indigo-500/50 hover:border-indigo-400 bg-indigo-950/20 hover:bg-indigo-950/40 text-indigo-200 font-semibold transition-all"
               >
                 <Upload size={14} />
                 <span>Tải lên file CSV bất kỳ từ máy tính...</span>
@@ -868,26 +943,29 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
             </div>
 
             {/* Feature Selection Checkboxes */}
-            <div className="space-y-2 pt-2 border-t border-slate-800">
-              <div className="flex items-center justify-between text-slate-300 font-semibold text-[11px]">
-                <span className="flex items-center gap-1 text-indigo-300">
+            <div className="space-y-3 pt-4 border-t border-slate-800/90">
+              <div className="flex items-center justify-between gap-2 text-slate-200 font-semibold text-xs">
+                <span className="flex items-center gap-1.5 text-indigo-200">
                   <CheckSquare size={13} /> Chọn đặc trưng ({selectedFeatures.length}/{featureColumns.length})
                 </span>
                 <div className="space-x-2 text-[10px]">
-                  <button onClick={onSelectAllFeatures} className="text-indigo-400 hover:underline">Tất cả</button>
-                  <button onClick={onDeselectAllFeatures} className="text-slate-400 hover:underline">Bỏ chọn</button>
+                  <button onClick={onSelectAllFeatures} disabled={isComputing} className="text-indigo-400 hover:underline disabled:opacity-40">Tất cả</button>
+                  <button onClick={onDeselectAllFeatures} disabled={isComputing} className="text-slate-400 hover:underline disabled:opacity-40">Bỏ chọn</button>
                 </div>
               </div>
 
-              <div className="max-h-48 overflow-y-auto space-y-1 bg-slate-950/60 p-2 rounded-xl border border-slate-800 custom-scrollbar">
+              <div className="max-h-52 overflow-y-auto space-y-1.5 bg-slate-950/70 p-2.5 rounded-xl border border-slate-700/80 custom-scrollbar">
                 {featureColumns.map((col) => {
                   const isSelected = selectedFeatures.includes(col);
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={col}
                       onClick={() => onToggleFeature(col)}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all ${
-                        isSelected ? 'bg-indigo-900/30 text-slate-200' : 'text-slate-500 hover:bg-slate-800/40'
+                      disabled={isComputing}
+                      aria-pressed={isSelected}
+                      className={`flex w-full items-center gap-2.5 px-2.5 py-2 text-left rounded-lg cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                        isSelected ? 'bg-indigo-900/40 text-slate-100' : 'text-slate-400 hover:bg-slate-800/60'
                       }`}
                     >
                       {isSelected ? (
@@ -896,11 +974,64 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                         <Square size={13} className="text-slate-600" />
                       )}
                       <span className="font-mono truncate">{col}</span>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
+              {featureColumns.length < MIN_NUMERIC_FEATURES ? (
+                <p className="rounded-lg border border-rose-500/20 bg-rose-950/20 px-2.5 py-2 text-[11px] leading-relaxed text-rose-200" role="status">
+                  Bộ dữ liệu cần có ít nhất {MIN_NUMERIC_FEATURES} cột số hợp lệ để phân tích.
+                </p>
+              ) : selectedFeatures.length < MIN_NUMERIC_FEATURES ? (
+                <p className="rounded-lg border border-amber-500/20 bg-amber-950/20 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200" role="status">
+                  Chọn thêm {MIN_NUMERIC_FEATURES - selectedFeatures.length} đặc trưng số để bật tính toán.
+                </p>
+              ) : null}
             </div>
+
+            {rawRows.length > 0 && (
+              <section className="space-y-3 rounded-2xl border border-emerald-500/25 bg-gradient-to-br from-emerald-950/20 to-slate-950/70 p-3.5 shadow-sm" aria-label="Xem trước dữ liệu gốc">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-[11px] font-bold text-emerald-300">Dữ liệu gốc · xem trước</h3>
+                    <p className="text-[10px] text-slate-400">
+                      {Math.min(rawRows.length, 10)} / {totalRows.toLocaleString('vi-VN')} dòng · chưa giảm chiều
+                    </p>
+                  </div>
+                  <FileSpreadsheet size={15} className="shrink-0 text-emerald-400" aria-hidden="true" />
+                </div>
+                <div className="max-h-52 overflow-auto rounded-xl border border-slate-700/80 custom-scrollbar">
+                  <table className="min-w-full border-collapse text-left text-[10px]">
+                    <thead className="sticky top-0 z-10 bg-slate-800 text-slate-300">
+                      <tr>
+                        {headers.map((header) => (
+                          <th key={header} scope="col" className="whitespace-nowrap border-b border-slate-700 px-2 py-1.5 font-semibold">
+                            {header}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rawRows.slice(0, 10).map((row, rowIndex) => (
+                        <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-slate-900/70' : 'bg-slate-950/70'}>
+                          {headers.map((header) => {
+                            const value: DataValue | undefined = row[header];
+                            return (
+                              <td key={header} className="max-w-40 whitespace-nowrap border-b border-slate-800/70 px-2 py-1 font-mono text-slate-300">
+                                <span className="block truncate" title={value == null ? '' : String(value)}>
+                                  {value == null ? '—' : String(value)}
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
           </div>
         )}
 
@@ -1003,7 +1134,9 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
             <div className="pt-3 border-t border-slate-800">
               <button
                 onClick={onExportCSV}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold transition-all border border-slate-700 shadow-md"
+                disabled={!hasResults || isComputing}
+                title={!hasResults ? 'Chạy tính toán trước khi xuất kết quả' : 'Tải tọa độ 3D và nhãn cụm dưới dạng CSV'}
+                className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-semibold transition-all border border-slate-700 shadow-md disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FileSpreadsheet size={16} className="text-emerald-400" />
                 <span>Xuất file CSV kết quả (3D + Cụm)</span>
@@ -1013,6 +1146,6 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
         )}
 
       </div>
-    </div>
+    </aside>
   );
 };

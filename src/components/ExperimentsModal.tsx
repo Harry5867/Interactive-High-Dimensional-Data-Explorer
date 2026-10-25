@@ -1,18 +1,8 @@
 import React from 'react';
 import { X, Database, Layers } from 'lucide-react';
+import { ExperimentRecord } from '../types';
 
-export interface ExperimentRecord {
-  id: number | string;
-  dataset_id: string;
-  dataset_name: string;
-  reduction_method: string;
-  clustering_method: string;
-  k: number;
-  silhouette_score: number | null;
-  ari: number | null;
-  params: Record<string, any>;
-  created_at: string;
-}
+export type { ExperimentRecord } from '../types';
 
 interface ExperimentsModalProps {
   isOpen: boolean;

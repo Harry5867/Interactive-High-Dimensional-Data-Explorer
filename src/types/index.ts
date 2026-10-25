@@ -2,11 +2,83 @@ export type ReductionMethod = 'PCA' | 't-SNE' | 'UMAP';
 export type ClusteringMethod = 'K-Means' | 'DBSCAN' | 'None';
 export type ColorMode = 'ground-truth' | 'cluster' | 'feature';
 export type NormalizationMethod = 'z-score' | 'min-max' | 'none';
+export const MIN_NUMERIC_FEATURES = 3;
+export type DataValue = string | number | boolean | null;
+export type DatasetRow = Record<string, DataValue>;
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+export interface DatasetDocument {
+  id: string;
+  name: string;
+  filename: string;
+  totalRows: number;
+  features: string[];
+  labelColumn: string | null;
+  idColumn: string | null;
+  rawRows: DatasetRow[];
+  createdAt: string;
+}
+
+export interface DatasetSummary {
+  id: string;
+  name: string;
+  filename: string;
+  total_rows: number;
+  label_column: string | null;
+  id_column: string | null;
+  created_at: string;
+}
+
+export interface ExperimentRecord {
+  id: number | string;
+  dataset_id: string;
+  dataset_name: string;
+  reduction_method: ReductionMethod | string;
+  clustering_method: ClusteringMethod | string;
+  k: number;
+  silhouette_score: number | null;
+  ari: number | null;
+  params: { [key: string]: JsonValue };
+  created_at: string;
+}
+
+export interface ComputeResult {
+  coordinates: [number, number, number][];
+  clusterAssignments: number[];
+  silhouetteScore: number | null;
+  adjustedRandIndex: number | null;
+  explainedVariance?: [number, number, number];
+  totalExplainedVariance?: number;
+  components?: number[][];
+  clusterCounts: Record<number, number>;
+  noiseCount: number;
+  fromCache?: boolean;
+  computeTimeMs?: number;
+}
+
+export interface SystemHealth {
+  uptime: string;
+  memory: {
+    rssMb: string;
+    heapUsedMb: string;
+    heapTotalMb: string;
+  };
+  database: {
+    engine: string;
+    connected: boolean;
+    latency: string;
+    totalDocuments: number;
+  };
+  cache: {
+    memoryEntries: number;
+    status: string;
+  };
+}
 
 export interface DataPoint {
-  id: string | number;
+  id: string | number | boolean;
   originalFeatures: Record<string, number>;
-  label?: string | number;
+  label?: DataValue;
   // 3D coordinates after reduction
   x: number;
   y: number;
@@ -22,7 +94,7 @@ export interface ParsedDataset {
   idColumn: string | null;
   labelColumn: string | null;
   featureColumns: string[];
-  rawRows: Record<string, any>[];
+  rawRows: DatasetRow[];
 }
 
 export interface ReductionConfig {

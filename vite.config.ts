@@ -8,6 +8,19 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  build: {
+    // The lazy Three.js chunk is 506 kB minified and about 127 kB over gzip.
+    chunkSizeWarningLimit: 525,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/three/')) {
+            return 'three-vendor';
+          }
+        },
+      },
+    },
+  },
   server: {
     port: 3000,
     open: false,

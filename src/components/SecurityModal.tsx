@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { SystemHealth } from '../types';
+import { getErrorMessage, isRecord, isSystemHealth } from '../utils/typeGuards';
 import {
   X,
   Shield,
@@ -36,7 +38,7 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
   const [isPinging, setIsPinging] = useState(false);
   const [pingResult, setPingResult] = useState<string | null>(null);
   const [copiedCmd, setCopiedCmd] = useState(false);
-  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheMsg, setCacheMsg] = useState<string | null>(null);
 
@@ -44,11 +46,12 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
     try {
       const res = await fetch('/api/system-health');
       if (res.ok) {
-        const data = await res.json();
-        setSystemHealth(data);
+        const data: unknown = await res.json();
+        if (isSystemHealth(data)) setSystemHealth(data);
       }
-    } catch (e) {
+    } catch (e: unknown) {
       // Backend may be offline
+      console.warn('Không thể tải trạng thái hệ thống:', e);
     }
   };
 
@@ -67,16 +70,19 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
     setPingResult(null);
     try {
       const res = await fetch('/api/test-db', { method: 'POST' });
-      const data = await res.json();
-      if (data.connected) {
+      const data: unknown = await res.json();
+      if (isRecord(data) && data.connected === true) {
         setPingResult('✅ Kết nối MongoDB Atlas THÀNH CÔNG! Độ trễ phản hồi cực thấp.');
       } else {
-        setPingResult(`⚠️ ${data.message || 'Chưa kết nối được. Đang chạy chế độ tự hành In-Memory.'}`);
+        const message = isRecord(data) && typeof data.message === 'string'
+          ? data.message
+          : 'Chưa kết nối được. Đang chạy chế độ tự hành In-Memory.';
+        setPingResult(`⚠️ ${message}`);
       }
       await onRefreshDb();
       await fetchHealth();
-    } catch (err: any) {
-      setPingResult('⚠️ Lỗi kiểm tra: ' + err.message);
+    } catch (err: unknown) {
+      setPingResult('⚠️ Lỗi kiểm tra: ' + getErrorMessage(err));
     } finally {
       setIsPinging(false);
     }
@@ -87,11 +93,14 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
     setCacheMsg(null);
     try {
       const res = await fetch('/api/cache', { method: 'DELETE' });
-      const data = await res.json();
-      setCacheMsg(data.message || 'Đã dọn dẹp cache tính toán!');
+      const data: unknown = await res.json();
+      const message = isRecord(data) && typeof data.message === 'string'
+        ? data.message
+        : 'Đã dọn dẹp cache tính toán!';
+      setCacheMsg(message);
       await fetchHealth();
-    } catch (err: any) {
-      setCacheMsg('Lỗi dọn cache: ' + err.message);
+    } catch (err: unknown) {
+      setCacheMsg('Lỗi dọn cache: ' + getErrorMessage(err));
     } finally {
       setIsClearingCache(false);
     }

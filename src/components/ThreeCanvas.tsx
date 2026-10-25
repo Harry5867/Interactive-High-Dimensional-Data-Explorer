@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { DataPoint, ColorMode } from '../types';
+import { getErrorMessage } from '../utils/typeGuards';
 import {
   RotateCcw,
   Play,
@@ -12,6 +13,8 @@ import {
   Layers,
   Compass,
   Palette,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 interface ThreeCanvasProps {
@@ -26,6 +29,7 @@ interface ThreeCanvasProps {
   syncCameraPos?: THREE.Vector3 | null;
   syncTargetPos?: THREE.Vector3 | null;
   titleBadge?: string;
+  axisFeatures?: string[];
   // Centroid visualizer toggle
   showCentroids?: boolean;
   // PCA Biplot feature vectors
@@ -68,6 +72,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   syncCameraPos,
   syncTargetPos,
   titleBadge,
+  axisFeatures,
   showCentroids = true,
   pcaComponents,
   featureNames,
@@ -80,11 +85,12 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   const [hoveredPoint, setHoveredPoint] = useState<DataPoint | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const [isAutoRotating, setIsAutoRotating] = useState(false);
+  const [areViewControlsCollapsed, setAreViewControlsCollapsed] = useState(false);
   const [pointScale, setPointScale] = useState(1.4);
-  const [isHoverPointScale, setIsHoverPointScale] = useState(false);
   const [centroidsVisible, setCentroidsVisible] = useState(showCentroids);
   const [biplotVisible, setBiplotVisible] = useState(showBiplot);
   const [isLegendExpanded, setIsLegendExpanded] = useState(true);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
   // Sync external showBiplot prop changes
   useEffect(() => {
@@ -240,7 +246,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     scene.add(dirLight2);
 
     // Grid Floor
-    const gridHelper = new THREE.GridHelper(80, 20, 0x4338ca, 0x1e293b);
+    const gridHelper = new THREE.GridHelper(80, 20, 0x6366f1, 0x334155);
     gridHelper.position.y = -38;
     scene.add(gridHelper);
 
@@ -627,13 +633,22 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       link.download = `3d_explorer_${reductionMethod.toLowerCase()}_${Date.now()}.png`;
       link.href = dataUrl;
       link.click();
-    } catch (e: any) {
-      alert('Không thể chụp ảnh: ' + e.message);
+    } catch (e: unknown) {
+      setSnapshotError(`Không thể chụp ảnh: ${getErrorMessage(e)}`);
+      window.setTimeout(() => setSnapshotError(null), 6000);
     }
   };
 
   return (
     <div className="relative w-full h-full overflow-hidden select-none" style={{ touchAction: 'none' }}>
+      {snapshotError && (
+        <div
+          role="alert"
+          className="absolute right-4 top-16 z-20 max-w-sm rounded-lg border border-rose-500/40 bg-rose-950/95 px-3 py-2 text-xs text-rose-100 shadow-lg"
+        >
+          {snapshotError}
+        </div>
+      )}
       {/* 3D Canvas Mount Point */}
       <div
         ref={canvasMountRef}
@@ -642,131 +657,153 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       />
 
       {/* 3D Viewport Title Badge */}
-      <div className="absolute top-4 left-4 z-10 flex items-center gap-2.5 bg-slate-900/90 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-700/60 shadow-xl pointer-events-auto">
-        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-        <span className="text-xs font-bold text-slate-100 tracking-wider">
-          {titleBadge || `KHÔNG GIAN 3D (${reductionMethod})`}
-        </span>
-        <span className="text-xs text-slate-500">|</span>
-        <span className="text-xs text-indigo-300 font-mono font-medium">
-          {dataPoints.length} mẫu
-        </span>
+      <div className="absolute left-4 right-auto top-4 z-10 flex w-fit max-w-[calc(100%-6rem)] min-w-0 flex-col gap-2 rounded-2xl border border-slate-700/70 bg-slate-900/90 px-4 py-3 shadow-xl shadow-slate-950/40 backdrop-blur-md pointer-events-auto">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="min-w-0 truncate text-xs font-bold tracking-[0.12em] text-slate-100">
+            {titleBadge || `KHÔNG GIAN 3D (${reductionMethod})`}
+          </span>
+          <span className="shrink-0 text-xs text-slate-500">|</span>
+          <span className="shrink-0 rounded-full border border-indigo-400/20 bg-indigo-400/10 px-2 py-0.5 text-[11px] font-mono font-semibold text-indigo-200">
+            {dataPoints.length} mẫu
+          </span>
+        </div>
+        {axisFeatures && axisFeatures.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 border-t border-slate-700/70 pt-2.5" aria-label="Các đặc trưng trên trục">
+            {axisFeatures.map((feature, index) => (
+              <span
+                key={`${index}-${feature}`}
+                className="max-w-full rounded-full border border-indigo-400/25 bg-indigo-950/50 px-2.5 py-1 text-[10px] leading-relaxed text-slate-200 shadow-sm shadow-indigo-950/30 [overflow-wrap:anywhere]"
+                title={feature}
+              >
+                <strong className="text-indigo-300">{['X', 'Y', 'Z'][index]}:</strong> {feature}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Floating View Controls */}
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/60 shadow-xl pointer-events-auto">
-        <button
-          onClick={() => setIsAutoRotating(!isAutoRotating)}
-          title={isAutoRotating ? 'Tạm dừng tự động xoay' : 'Bật tự động xoay 360°'}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            isAutoRotating
-              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
-              : 'text-slate-300 hover:bg-slate-800'
-          }`}
-        >
-          {isAutoRotating ? <Pause size={14} /> : <Play size={14} />}
-          <span>{isAutoRotating ? 'Dừng xoay' : 'Tự xoay 360°'}</span>
-        </button>
-
-        {/* Toggle 3D Centroids Rings */}
-        <button
-          onClick={() => setCentroidsVisible(!centroidsVisible)}
-          title={centroidsVisible ? 'Ẩn tâm cụm 3D phát sáng' : 'Hiện tâm cụm 3D phát sáng'}
-          className={`p-1.5 rounded-lg transition-all ${
-            centroidsVisible ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-slate-400 hover:bg-slate-800'
-          }`}
-        >
-          <Layers size={15} />
-        </button>
-
-        {/* Toggle PCA Biplot Vectors */}
-        {reductionMethod === 'PCA' && (
+      <div className="absolute right-3 top-4 z-20 flex max-h-[calc(100%-2rem)] w-[4.5rem] flex-col items-center gap-2 pointer-events-auto">
+        {areViewControlsCollapsed ? (
           <button
-            onClick={() => {
-              if (onToggleBiplot) onToggleBiplot();
-              else setBiplotVisible(!biplotVisible);
-            }}
-            title={biplotVisible ? 'Ẩn véc-tơ đặc trưng 3D (PCA Biplot)' : 'Hiện véc-tơ đặc trưng 3D (PCA Biplot)'}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              biplotVisible
-                ? 'bg-rose-600/80 hover:bg-rose-500 text-white shadow shadow-rose-600/40'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-            }`}
+            type="button"
+            onClick={() => setAreViewControlsCollapsed(false)}
+            aria-label="Mở thanh công cụ biểu đồ"
+            title="Mở thanh công cụ biểu đồ"
+            className="w-full rounded-xl border border-slate-700/60 bg-slate-900/90 p-2 text-slate-200 shadow-xl backdrop-blur-md transition-colors hover:bg-slate-800"
           >
-            <Compass size={14} />
-            <span>Biplot</span>
+            <ChevronDown size={16} />
           </button>
-        )}
-
-        {/* Snapshot High-Res Capture */}
-        <button
-          onClick={handleTakeSnapshot}
-          title="Chụp ảnh 3D phân giải cao (PNG sắc nét cho báo cáo/slide)"
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white text-xs font-semibold transition-all shadow shadow-emerald-700/40"
-        >
-          <Camera size={14} />
-          <span>Chụp 3D</span>
-        </button>
-
-        <div className="h-4 w-[1px] bg-slate-700" />
-
-        <button
-          onClick={handleResetCamera}
-          title="Đặt lại góc nhìn mặc định"
-          className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
-        >
-          <RotateCcw size={15} />
-        </button>
-
-        <button
-          onClick={() => handleZoom('in')}
-          title="Phóng to (+)"
-          className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
-        >
-          <ZoomIn size={15} />
-        </button>
-
-        <button
-          onClick={() => handleZoom('out')}
-          title="Thu nhỏ (-)"
-          className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
-        >
-          <ZoomOut size={15} />
-        </button>
-
-        <div className="h-4 w-[1px] bg-slate-700" />
-
-        <div
-          className="relative flex items-center gap-2 px-2 text-xs text-slate-300 group"
-          onMouseEnter={() => setIsHoverPointScale(true)}
-          onMouseLeave={() => setIsHoverPointScale(false)}
-        >
-          {/* Floating Bubble Tooltip */}
-          {isHoverPointScale && (
-            <div
-              style={{
-                left: `${((pointScale - 0.6) / (3.5 - 0.6)) * 64 + 32}px`,
-              }}
-              className="absolute -top-7 transform -translate-x-1/2 pointer-events-none px-2 py-0.5 rounded-md bg-indigo-600 text-white font-mono text-[10px] font-bold shadow-lg border border-indigo-400 whitespace-nowrap animate-fade-in z-30"
+        ) : (
+          <div className="flex max-h-full w-full flex-col items-stretch gap-1.5 overflow-y-auto rounded-2xl border border-slate-700/80 bg-slate-900/95 p-2 shadow-xl shadow-slate-950/50 backdrop-blur-md">
+            <button
+              onClick={() => setIsAutoRotating(!isAutoRotating)}
+              title={isAutoRotating ? 'Tạm dừng tự động xoay' : 'Bật tự động xoay 360°'}
+              className={`flex min-h-12 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[9px] font-semibold leading-tight transition-all ${
+                isAutoRotating ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-300 hover:bg-slate-800'
+              }`}
             >
-              {pointScale.toFixed(1)}x
-              <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-indigo-600" />
+              {isAutoRotating ? <Pause size={15} /> : <Play size={15} />}
+              <span>{isAutoRotating ? 'Dừng xoay' : 'Tự xoay'}</span>
+            </button>
+
+            <button
+              onClick={() => setCentroidsVisible(!centroidsVisible)}
+              title={centroidsVisible ? 'Ẩn tâm cụm 3D phát sáng' : 'Hiện tâm cụm 3D phát sáng'}
+              className={`flex min-h-10 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[9px] font-semibold leading-tight transition-all ${
+                centroidsVisible ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-slate-400 hover:bg-slate-800'
+              }`}
+            >
+              <Layers size={15} />
+              <span>Tâm cụm</span>
+            </button>
+
+            {reductionMethod === 'PCA' && (
+              <button
+                onClick={() => {
+                  if (onToggleBiplot) onToggleBiplot();
+                  else setBiplotVisible(!biplotVisible);
+                }}
+                title={biplotVisible ? 'Ẩn véc-tơ đặc trưng 3D (PCA Biplot)' : 'Hiện véc-tơ đặc trưng 3D (PCA Biplot)'}
+                className={`flex min-h-10 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[9px] font-semibold leading-tight transition-all ${
+                  biplotVisible ? 'bg-rose-600/80 text-white shadow shadow-rose-600/40' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <Compass size={15} />
+                <span>Biplot</span>
+              </button>
+            )}
+
+            <button
+              onClick={handleTakeSnapshot}
+              title="Chụp ảnh 3D phân giải cao (PNG)"
+              className="flex min-h-10 flex-col items-center justify-center gap-1 rounded-lg bg-emerald-600/80 px-1 py-1.5 text-[9px] font-semibold leading-tight text-white shadow shadow-emerald-700/40 transition-all hover:bg-emerald-500"
+            >
+              <Camera size={15} />
+              <span>Chụp 3D</span>
+            </button>
+
+            <div className="mx-2 h-px bg-slate-700" />
+
+            <button
+              onClick={handleResetCamera}
+              title="Đặt lại góc nhìn mặc định"
+              aria-label="Đặt lại góc nhìn mặc định"
+              className="flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] text-slate-300 transition-all hover:bg-slate-800 hover:text-white"
+            >
+              <RotateCcw size={15} />
+              <span>Đặt lại</span>
+            </button>
+
+            <button
+              onClick={() => handleZoom('in')}
+              title="Phóng to (+)"
+              aria-label="Phóng to"
+              className="flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] text-slate-300 transition-all hover:bg-slate-800 hover:text-white"
+            >
+              <ZoomIn size={15} />
+              <span>Phóng to</span>
+            </button>
+
+            <button
+              onClick={() => handleZoom('out')}
+              title="Thu nhỏ (-)"
+              aria-label="Thu nhỏ"
+              className="flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] text-slate-300 transition-all hover:bg-slate-800 hover:text-white"
+            >
+              <ZoomOut size={15} />
+              <span>Thu nhỏ</span>
+            </button>
+
+            <div className="mx-2 h-px bg-slate-700" />
+
+            <div className="flex flex-col items-center gap-1.5 rounded-lg border border-slate-700/70 bg-slate-950/60 px-1.5 py-2 text-[9px] text-slate-300">
+              <span className="font-semibold tracking-wide text-slate-300">Cỡ điểm</span>
+              <input
+                type="range"
+                min="0.6"
+                max="3.5"
+                step="0.1"
+                value={pointScale}
+                aria-label="Kích thước điểm dữ liệu"
+                onChange={(e) => setPointScale(parseFloat(e.target.value))}
+                className="h-1.5 w-11 cursor-pointer accent-indigo-400"
+              />
+              <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 font-mono font-bold text-indigo-200">{pointScale.toFixed(1)}x</span>
             </div>
-          )}
-          <span className="text-[11px] text-slate-400 font-medium">Cỡ:</span>
-          <input
-            type="range"
-            min="0.6"
-            max="3.5"
-            step="0.1"
-            value={pointScale}
-            onChange={(e) => setPointScale(parseFloat(e.target.value))}
-            className="w-16 accent-indigo-500 cursor-pointer"
-          />
-          <span className="font-mono text-indigo-400 font-bold text-[11px] min-w-[28px] text-right">
-            {pointScale.toFixed(1)}x
-          </span>
-        </div>
+
+            <button
+              type="button"
+              onClick={() => setAreViewControlsCollapsed(true)}
+              aria-label="Thu gọn thanh công cụ biểu đồ"
+              title="Thu gọn thanh công cụ"
+              className="flex min-h-8 items-center justify-center rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+            >
+              <ChevronUp size={16} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Hover Tooltip */}
@@ -801,7 +838,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         </div>
       )}
       {/* Floating Color Legend (Top-Left, below Title Badge - Không bị đè) */}
-      <div className="absolute top-16 left-4 z-10 pointer-events-auto bg-slate-900/90 hover:bg-slate-900 backdrop-blur-md border border-slate-700/80 p-2.5 rounded-xl shadow-xl flex flex-col gap-1.5 text-[11px] transition-all">
+      <div className="absolute left-4 top-28 z-10 pointer-events-auto flex flex-col gap-1.5 rounded-xl border border-slate-700/80 bg-slate-900/90 p-2.5 text-[11px] shadow-xl backdrop-blur-md transition-all hover:bg-slate-900">
         <div 
           onClick={() => setIsLegendExpanded(!isLegendExpanded)}
           className="flex items-center justify-between gap-3 cursor-pointer select-none"

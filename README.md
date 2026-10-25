@@ -21,6 +21,10 @@ Hệ thống được xây dựng theo kiến trúc **Fullstack 100% TypeScript/
 
 ## ✨ Tính Năng Nổi Bật
 
+### 0. 🧭 Xem Dữ Liệu & Phân Tích Tách Biệt
+- Xem trước 10 dòng dữ liệu gốc ngay sau khi chọn hoặc tải bộ dữ liệu; thao tác này không tự chạy phân tích.
+- Chạy PCA, t-SNE hoặc UMAP riêng để biến đổi dữ liệu sang tọa độ 3D; sau đó có thể áp dụng thuật toán phân cụm riêng trên tọa độ đó.
+
 ### 1. 🌐 Không Gian Trực Quan Hóa 3D (Three.js WebGL)
 - **Tương tác 3D mượt mà**: Xoay (Orbit), Thu phóng (Zoom), Di chuyển (Pan) và Tự động xoay quanh tâm (Auto-rotation).
 - **Tùy chỉnh hạt phân tử**: Thanh trượt `TooltipSlider` chỉnh kích thước điểm dữ liệu `0.6x` – `3.5x` thời gian thực.
@@ -50,6 +54,12 @@ Hệ thống được xây dựng theo kiến trúc **Fullstack 100% TypeScript/
 - **Nén Gzip HTTP Compression**: Giảm 70% dung lượng payload truyền tải qua mạng.
 - **Trung tâm Giám sát Hệ thống**: Theo dõi thời gian thực RAM Usage, Uptime, độ trễ MongoDB, trạng thái kết nối mạng LAN.
 - **Xuất dữ liệu CSV**: Tải về file kết quả gồm tọa độ 3D và nhãn cụm vừa phân tích.
+
+### 5. 🧭 Trải Nghiệm Sử Dụng & An Toàn Kiểu Dữ Liệu
+- Giao diện dữ liệu hướng dẫn chọn bộ dữ liệu, đặc trưng số và yêu cầu tối thiểu 3 đặc trưng trước khi tính toán 3D.
+- Thông báo thành công/lỗi và trạng thái xử lý được hiển thị trực tiếp, có thể đọc bởi công nghệ hỗ trợ.
+- Tệp CSV được chuẩn hóa về kiểu dữ liệu rõ ràng; phản hồi API được kiểm tra cấu trúc trước khi dùng.
+- Kiểu dữ liệu miền dùng chung cho dataset, dòng CSV, kết quả tính toán, thí nghiệm và trạng thái hệ thống; xử lý lỗi dùng `unknown` thay vì `any`.
 
 ---
 
