@@ -24,9 +24,11 @@ export interface DatasetSummary {
   name: string;
   filename: string;
   total_rows: number;
+  features_count?: number;
   label_column: string | null;
   id_column: string | null;
   created_at: string;
+  is_preloaded?: boolean;
 }
 
 export interface ExperimentRecord {
@@ -88,6 +90,7 @@ export interface DataPoint {
 }
 
 export interface ParsedDataset {
+  id?: string;
   name: string;
   totalRows: number;
   headers: string[];

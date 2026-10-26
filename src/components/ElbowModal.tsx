@@ -9,6 +9,7 @@ interface ElbowModalProps {
   featureMatrix: number[][];
   currentK: number;
   onApplyK: (k: number) => void;
+  theme?: 'dark' | 'light';
 }
 
 interface KMetric {
@@ -23,7 +24,9 @@ export const ElbowModal: React.FC<ElbowModalProps> = ({
   featureMatrix,
   currentK,
   onApplyK,
+  theme = 'dark',
 }) => {
+  const isLight = theme === 'light';
   const [selectedK, setSelectedK] = useState<number>(currentK);
   const [isComputing, setIsComputing] = useState(false);
 
@@ -86,28 +89,38 @@ export const ElbowModal: React.FC<ElbowModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-      <div className="relative w-full max-w-3xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className={`relative w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border transition-colors ${
+        isLight ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-700/80 text-white'
+      }`}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/50">
+        <div className={`flex items-center justify-between px-6 py-4 border-b ${
+          isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/50 border-slate-800'
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+            <div className={`p-2 rounded-xl border ${
+              isLight ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
+            }`}>
               <TrendingDown size={22} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <h2 className={`text-lg font-bold flex items-center gap-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 Phân tích số cụm tối ưu K (Elbow Method & Silhouette)
-                <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-indigo-900/60 text-indigo-300 border border-indigo-700/50">
+                <span className={`px-2 py-0.5 rounded text-[11px] font-mono border ${
+                  isLight ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-indigo-900/60 text-indigo-300 border-indigo-700/50'
+                }`}>
                   K = 2 → 8
                 </span>
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                 Dò tìm điểm "Khuỷu tay" (Elbow) và điểm số phân tách Silhouette cao nhất
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className={`p-1.5 rounded-lg transition-colors ${
+              isLight ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
           >
             <X size={20} />
           </button>
@@ -116,16 +129,18 @@ export const ElbowModal: React.FC<ElbowModalProps> = ({
         {/* Content */}
         <div className="p-6 overflow-y-auto space-y-5">
           {/* Chart Section */}
-          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+          <div className={`border rounded-xl p-4 ${
+            isLight ? 'bg-slate-50/80 border-slate-200' : 'bg-slate-950/70 border-slate-800'
+          }`}>
             <div className="flex items-center justify-between text-xs mb-3">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-1.5 font-medium">
-                  <span className="w-3 h-1 bg-amber-400 rounded-full inline-block" />
-                  <span className="text-amber-300">Inertia / WCSS (Trục trái - Càng thấp cụm càng chặt)</span>
+                  <span className="w-3 h-1 bg-amber-500 rounded-full inline-block" />
+                  <span className={isLight ? 'text-amber-700' : 'text-amber-300'}>Inertia / WCSS (Trục trái - Càng thấp cụm càng chặt)</span>
                 </div>
                 <div className="flex items-center gap-1.5 font-medium">
-                  <span className="w-3 h-1 bg-emerald-400 rounded-full inline-block" />
-                  <span className="text-emerald-300">Silhouette Score (Trục phải - Càng cao càng phân tách tốt)</span>
+                  <span className="w-3 h-1 bg-emerald-500 rounded-full inline-block" />
+                  <span className={isLight ? 'text-emerald-700' : 'text-emerald-300'}>Silhouette Score (Trục phải - Càng cao càng phân tách tốt)</span>
                 </div>
               </div>
             </div>
@@ -266,18 +281,22 @@ export const ElbowModal: React.FC<ElbowModalProps> = ({
                   onClick={() => setSelectedK(m.k)}
                   className={`flex flex-col items-center p-2.5 rounded-xl border text-center transition-all ${
                     isSelected
-                      ? 'bg-indigo-600/20 border-indigo-500 shadow-md shadow-indigo-500/20'
-                      : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800 hover:border-slate-600'
+                      ? isLight
+                        ? 'bg-indigo-50 border-indigo-500 shadow-md ring-2 ring-indigo-400/30'
+                        : 'bg-indigo-600/20 border-indigo-500 shadow-md shadow-indigo-500/20'
+                      : isLight
+                        ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                        : 'bg-slate-800/40 border-slate-700/60 hover:bg-slate-800 hover:border-slate-600'
                   }`}
                 >
                   <div className="flex items-center gap-1">
-                    <span className="text-xs font-bold text-white">K = {m.k}</span>
-                    {isBest && <Sparkles size={11} className="text-emerald-400" />}
+                    <span className={`text-xs font-bold ${isLight ? 'text-slate-800' : 'text-white'}`}>K = {m.k}</span>
+                    {isBest && <Sparkles size={11} className="text-emerald-500" />}
                   </div>
-                  <div className="text-[10px] text-amber-400 font-mono mt-1">
+                  <div className="text-[10px] text-amber-500 font-mono mt-1">
                     {m.inertia > 1000 ? `${(m.inertia / 1000).toFixed(1)}k` : m.inertia.toFixed(0)}
                   </div>
-                  <div className="text-[10px] text-emerald-400 font-mono font-semibold">
+                  <div className="text-[10px] text-emerald-500 font-mono font-semibold">
                     Sil: {m.silhouette.toFixed(2)}
                   </div>
                 </button>
@@ -286,22 +305,24 @@ export const ElbowModal: React.FC<ElbowModalProps> = ({
           </div>
 
           {/* Scientific Interpretation Card */}
-          <div className="p-4 rounded-xl bg-indigo-950/30 border border-indigo-800/50 flex items-start gap-3">
-            <Award className="text-indigo-400 shrink-0 mt-0.5" size={20} />
-            <div className="text-xs leading-relaxed text-indigo-200">
-              <span className="font-bold text-white">Khuyến nghị học thuật: </span>
+          <div className={`p-4 rounded-xl border flex items-start gap-3 ${
+            isLight ? 'bg-indigo-50/70 border-indigo-200 text-indigo-900' : 'bg-indigo-950/30 border-indigo-800/50 text-indigo-200'
+          }`}>
+            <Award className="text-indigo-500 shrink-0 mt-0.5" size={20} />
+            <div className="text-xs leading-relaxed">
+              <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>Khuyến nghị học thuật: </span>
               {bestKBySilhouette === 2 ? (
                 <span>
                   Tại <strong>K = 2</strong>, chỉ số Silhouette đạt giá trị cực đại{' '}
-                  <span className="font-mono font-bold text-emerald-400">
+                  <span className="font-mono font-bold text-emerald-500">
                     ({metricsList.find(m => m.k === 2)?.silhouette.toFixed(3)})
                   </span>{' '}
-                  và độ dốc Inertia giảm mạnh nhất (Elbow Point). Kết quả này hoàn toàn trùng khớp với bản chất y khoa của tập dữ liệu Ung thư vú Wisconsin (gồm 2 nhãn: <strong>Ác tính (M)</strong> và <strong>Lành tính (B)</strong>).
+                  và độ dốc Inertia giảm mạnh nhất (Elbow Point). Điều này cho thấy cấu trúc dữ liệu có xu hướng hình thành 2 nhóm tập trung phân tách rõ nét nhất.
                 </span>
               ) : (
                 <span>
                   Điểm phân tách tốt nhất đạt được tại <strong>K = {bestKBySilhouette}</strong> với điểm Silhouette{' '}
-                  <span className="font-mono font-bold text-emerald-400">
+                  <span className="font-mono font-bold text-emerald-500">
                     ({metricsList.find(m => m.k === bestKBySilhouette)?.silhouette.toFixed(3)})
                   </span>.
                 </span>
@@ -311,14 +332,18 @@ export const ElbowModal: React.FC<ElbowModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
-          <div className="text-xs text-slate-400">
-            Số cụm đang chọn: <span className="font-bold text-indigo-300">K = {selectedK}</span>
+        <div className={`px-6 py-3.5 border-t flex items-center justify-between ${
+          isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
+        }`}>
+          <div className={`text-xs ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
+            Số cụm đang chọn: <span className="font-bold text-indigo-600">K = {selectedK}</span>
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                isLight ? 'text-slate-600 hover:text-slate-900 bg-slate-200 hover:bg-slate-300' : 'text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700'
+              }`}
             >
               Đóng
             </button>

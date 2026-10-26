@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "tsx server/index.ts",
-    "dev:all": "concurrently -k -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"tsx server/index.ts\" \"vite\"",
+    "server": "tsx watch server/index.ts",
+    "dev:all": "concurrently -k -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"tsx watch server/index.ts\" \"vite\"",
     "dev:host": "concurrently -k -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"tsx server/index.ts\" \"vite --host 0.0.0.0 --port 3000\"",
     "build": "tsc && vite build",
     "preview": "vite preview"

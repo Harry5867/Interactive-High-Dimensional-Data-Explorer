@@ -45,7 +45,9 @@ export function isDatasetSummary(value: unknown): value is DatasetSummary {
     && typeof value.total_rows === 'number'
     && (typeof value.label_column === 'string' || value.label_column === null)
     && (typeof value.id_column === 'string' || value.id_column === null)
-    && typeof value.created_at === 'string';
+    && typeof value.created_at === 'string'
+    && (value.features_count === undefined || typeof value.features_count === 'number')
+    && (value.is_preloaded === undefined || typeof value.is_preloaded === 'boolean');
 }
 
 export function isComputeResult(value: unknown): value is ComputeResult {

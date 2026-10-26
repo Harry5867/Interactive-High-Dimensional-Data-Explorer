@@ -25,6 +25,8 @@ import { ControlSidebar } from './components/ControlSidebar';
 import type { SidebarTab } from './components/ControlSidebar';
 import { MetricsPanel } from './components/MetricsPanel';
 import { DataInspector } from './components/DataInspector';
+import { RawDataModal } from './components/RawDataModal';
+import { DatasetManagerModal } from './components/DatasetManagerModal';
 import { ExperimentRecord } from './types';
 import {
   getErrorMessage,
@@ -96,6 +98,38 @@ export function App() {
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [dbStatus, setDbStatus] = useState<string>('Đang kiểm tra...');
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  // Dataset Management & Theme State
+  const [datasetList, setDatasetList] = useState<DatasetSummary[]>([]);
+  const [activeDatasetId, setActiveDatasetId] = useState<string>('cancer_wdbc');
+  const [isRawDataModalOpen, setIsRawDataModalOpen] = useState<boolean>(false);
+  const [isDatasetManagerOpen, setIsDatasetManagerOpen] = useState<boolean>(false);
+
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      const saved = localStorage.getItem('theme');
+      return saved === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
+  useEffect(() => {
+    if (theme === 'light') {
+      document.body.classList.add('light-theme');
+    } else {
+      document.body.classList.remove('light-theme');
+    }
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      // ignore
+    }
+  }, [theme]);
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
 
   // Elbow Modal, Security Modal & PCA Biplot State
   const [isElbowModalOpen, setIsElbowModalOpen] = useState<boolean>(false);
@@ -177,77 +211,170 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // 1. Initial Load: Fetch from Backend MongoDB API or fallback
-  const loadInitialDataset = useCallback(async () => {
+  // Reset all computation & analytical states to ensure 100% data consistency
+  const resetComputationState = useCallback(() => {
+    setDataPoints([]);
+    setDualDataPoints([]);
+    setSelectedPoint(null);
+    setPcaComponents(undefined);
+    setFeatureMatrix([]);
+    setMetrics({
+      silhouetteScore: null,
+      adjustedRandIndex: null,
+      clusterCounts: {},
+    });
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    setIsLiveAnimating(false);
+    liveStateRef.current = null;
+    setLiveCurrentIter(0);
+  }, []);
+
+  // Fetch all datasets from backend
+  const fetchDatasetList = useCallback(async () => {
+    try {
+      const res = await fetch('/api/datasets');
+      if (res.ok) {
+        const list: unknown = await res.json();
+        if (Array.isArray(list)) {
+          setDatasetList(list.filter(isDatasetSummary));
+        }
+      }
+    } catch (e: unknown) {
+      console.warn('Không thể nạp danh sách bộ dữ liệu từ server:', e);
+    }
+  }, []);
+
+  // Select and switch active dataset
+  const handleSelectDataset = useCallback(async (id: string) => {
     try {
       setIsComputing(true);
-      setLoadingMessage('Đang nạp dữ liệu từ MongoDB...');
-      
+      setLoadingMessage('Đang nạp bộ dữ liệu...');
+      resetComputationState();
+
+      // 1. Try fetching dataset by ID from backend
       try {
-        const res = await fetch('/api/datasets');
+        const res = await fetch(`/api/datasets/${id}`);
         if (res.ok) {
-          const datasetsList: unknown = await res.json();
-          if (Array.isArray(datasetsList)) {
-            const cancerDataset = datasetsList.find(
-              (item): item is DatasetSummary => isDatasetSummary(item) && item.id === 'cancer_wdbc'
-            );
-            if (cancerDataset) {
-              const detailRes = await fetch(`/api/datasets/${cancerDataset.id}`);
-              if (detailRes.ok) {
-                const data: unknown = await detailRes.json();
-                if (isDatasetDocument(data)) {
-                  const parsed: ParsedDataset = {
-                    name: data.name,
-                    totalRows: data.totalRows,
-                    headers: Object.keys(data.rawRows[0] || {}),
-                    idColumn: data.idColumn,
-                    labelColumn: data.labelColumn,
-                    featureColumns: data.features,
-                    rawRows: data.rawRows,
-                  };
-                  setDataset(parsed);
-                  setSelectedFeatures(parsed.featureColumns);
-                  if (parsed.featureColumns.length > 0) {
-                    setSelectedColorFeature(parsed.featureColumns[0]);
-                  }
-                  return;
-                }
-              }
+          const data: unknown = await res.json();
+          if (isDatasetDocument(data)) {
+            const parsed: ParsedDataset = {
+              id: data.id,
+              name: data.name,
+              totalRows: data.totalRows,
+              headers: Object.keys(data.rawRows[0] || {}),
+              idColumn: data.idColumn,
+              labelColumn: data.labelColumn,
+              featureColumns: data.features,
+              rawRows: data.rawRows,
+            };
+            setDataset(parsed);
+            setActiveDatasetId(id);
+            setSelectedFeatures(parsed.featureColumns);
+            if (parsed.featureColumns.length > 0) {
+              setSelectedColorFeature(parsed.featureColumns[0]);
             }
+            setNotice({ type: 'success', message: `Đã chọn bộ dữ liệu "${parsed.name}".` });
+            return;
           }
         }
       } catch (apiError: unknown) {
-        console.warn('API dataset không khả dụng; dùng bộ dữ liệu local:', apiError);
+        console.warn(`Không thể nạp dataset ${id} từ API, thử fallback:`, apiError);
       }
 
-      // Fallback
-      const staticRes = await fetch('/data.csv');
-      if (!staticRes.ok) throw new Error('Không thể tải bộ dữ liệu mẫu /data.csv.');
-      const text = await staticRes.text();
-      const parsed = parseCSVString(text, 'Wisconsin Breast Cancer');
-      setDataset(parsed);
-      setSelectedFeatures(parsed.featureColumns);
-      if (parsed.featureColumns.length > 0) {
-        setSelectedColorFeature(parsed.featureColumns[0]);
+      // 2. Fallbacks for standard datasets if server offline
+      if (id.includes('cancer')) {
+        const staticRes = await fetch('/data.csv');
+        if (!staticRes.ok) throw new Error('Không thể tải bộ dữ liệu mẫu /data.csv.');
+        const text = await staticRes.text();
+        const parsed = parseCSVString(text, 'Wisconsin Breast Cancer');
+        setDataset(parsed);
+        setActiveDatasetId('cancer_wdbc');
+        setSelectedFeatures(parsed.featureColumns);
+        if (parsed.featureColumns.length > 0) {
+          setSelectedColorFeature(parsed.featureColumns[0]);
+        }
+      } else if (id.includes('wholesale')) {
+        const staticRes = await fetch('/wholesale.csv');
+        if (!staticRes.ok) throw new Error('Không thể tải bộ dữ liệu mẫu /wholesale.csv.');
+        const text = await staticRes.text();
+        const parsed = parseCSVString(text, 'Wholesale Customers');
+        setDataset(parsed);
+        setActiveDatasetId('wholesale_customers');
+        setSelectedFeatures(parsed.featureColumns);
+        if (parsed.featureColumns.length > 0) {
+          setSelectedColorFeature(parsed.featureColumns[0]);
+        }
       }
     } catch (err: unknown) {
-      console.error('Không thể nạp bộ dữ liệu ban đầu:', err);
-      setNotice({ type: 'error', message: `Không thể nạp dữ liệu mẫu: ${getErrorMessage(err)}` });
+      console.error('Không thể nạp bộ dữ liệu:', err);
+      setNotice({ type: 'error', message: `Không thể nạp dữ liệu: ${getErrorMessage(err)}` });
     } finally {
       setIsComputing(false);
       setLoadingMessage('');
     }
-  }, []);
+  }, [resetComputationState]);
+
+  // Rename a dataset
+  const handleRenameDataset = async (id: string, newName: string) => {
+    try {
+      const res = await fetch(`/api/datasets/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      });
+      if (!res.ok) throw new Error('Không thể đổi tên bộ dữ liệu.');
+      await fetchDatasetList();
+      if (dataset && (activeDatasetId === id || dataset.name === newName)) {
+        setDataset((prev) => (prev ? { ...prev, name: newName } : null));
+      }
+      setNotice({ type: 'success', message: `Đã đổi tên bộ dữ liệu thành "${newName}".` });
+    } catch (err: unknown) {
+      setNotice({ type: 'error', message: `Lỗi đổi tên: ${getErrorMessage(err)}` });
+    }
+  };
+
+  // Delete an uploaded dataset
+  const handleDeleteDataset = async (id: string) => {
+    try {
+      const res = await fetch(`/api/datasets/${id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data: unknown = await res.json().catch(() => null);
+        const errMsg = isRecord(data) && typeof data.error === 'string' ? data.error : 'Không thể xóa bộ dữ liệu';
+        throw new Error(errMsg);
+      }
+      await fetchDatasetList();
+      setNotice({ type: 'success', message: 'Đã xóa bộ dữ liệu thành công.' });
+
+      // If active dataset was deleted, switch back to cancer_wdbc
+      if (activeDatasetId === id) {
+        await handleSelectDataset('cancer_wdbc');
+      }
+    } catch (err: unknown) {
+      setNotice({ type: 'error', message: `Lỗi xóa: ${getErrorMessage(err)}` });
+    }
+  };
+
+  // Initial Load: Fetch list and Wisconsin Breast Cancer
+  const loadInitialDataset = useCallback(async () => {
+    await fetchDatasetList();
+    await handleSelectDataset('cancer_wdbc');
+  }, [fetchDatasetList, handleSelectDataset]);
 
   useEffect(() => {
     loadInitialDataset();
   }, [loadInitialDataset]);
 
-  // 2. Upload file directly to Backend MongoDB
+  // Upload file directly to Backend MongoDB and switch to it
   const handleFileUpload = async (file: File) => {
     try {
       setIsComputing(true);
       setLoadingMessage('Đang kiểm tra cấu trúc CSV...');
+      resetComputationState();
 
       const parsed = parseCSVString(await file.text(), file.name);
 
@@ -266,9 +393,10 @@ export function App() {
         setDataset(parsed);
         setSelectedFeatures(parsed.featureColumns);
         setSelectedColorFeature(parsed.featureColumns[0] ?? '');
+        setActiveDatasetId('custom_client');
         setNotice({
           type: 'info',
-          message: 'CSV hợp lệ và đã được mở trong trình duyệt. Máy chủ không kết nối được nên tệp chưa được lưu; chọn Cancer sẽ tải lại đúng bộ dữ liệu mẫu.',
+          message: 'CSV hợp lệ và đã được mở trong trình duyệt. Máy chủ không kết nối được nên tệp chưa được lưu vào CSDL.',
         });
         return;
       }
@@ -285,7 +413,9 @@ export function App() {
       if (!isDatasetDocument(data)) {
         throw new Error('Máy chủ trả về dữ liệu CSV không đúng cấu trúc.');
       }
+
       setDataset({
+        id: data.id,
         name: data.name,
         totalRows: data.totalRows,
         headers: Object.keys(data.rawRows[0] || {}),
@@ -294,9 +424,11 @@ export function App() {
         featureColumns: data.features,
         rawRows: data.rawRows,
       });
+      setActiveDatasetId(data.id);
       setSelectedFeatures(data.features);
       setSelectedColorFeature(data.features[0] ?? '');
-      setNotice({ type: 'success', message: `Đã tải bộ dữ liệu "${data.name}" (${data.totalRows} dòng).` });
+      await fetchDatasetList();
+      setNotice({ type: 'success', message: `Đã tải và lưu bộ dữ liệu "${data.name}" (${data.totalRows} dòng).` });
     } catch (err: unknown) {
       setNotice({ type: 'error', message: `Lỗi tải file: ${getErrorMessage(err)}` });
     } finally {
@@ -307,24 +439,9 @@ export function App() {
 
   const handleLoadPreloaded = async (type: 'cancer' | 'wholesale' | 'synthetic') => {
     if (type === 'cancer') {
-      await loadInitialDataset();
+      await handleSelectDataset('cancer_wdbc');
     } else if (type === 'wholesale') {
-      try {
-        setIsComputing(true);
-        setLoadingMessage('Đang nạp dữ liệu Wholesale...');
-        const res = await fetch('/wholesale.csv');
-        if (!res.ok) throw new Error(`Không thể tải bộ dữ liệu Wholesale (HTTP ${res.status}).`);
-        const text = await res.text();
-        const parsed = parseCSVString(text, 'Wholesale Customers');
-        setDataset(parsed);
-        setSelectedFeatures(parsed.featureColumns);
-        setSelectedColorFeature(parsed.featureColumns[0] ?? '');
-      } catch (err: unknown) {
-        setNotice({ type: 'error', message: `Không thể nạp bộ dữ liệu mẫu: ${getErrorMessage(err)}` });
-      } finally {
-        setIsComputing(false);
-        setLoadingMessage('');
-      }
+      await handleSelectDataset('wholesale_customers');
     }
   };
 
@@ -758,7 +875,7 @@ export function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100 select-none">
+    <div className={`flex h-screen w-screen overflow-hidden font-sans select-none transition-colors duration-200 ${theme === 'light' ? 'bg-slate-100 text-slate-800' : 'bg-slate-950 text-slate-100'}`}>
       {notice && (
         <div
           role={notice.type === 'error' ? 'alert' : 'status'}
@@ -832,6 +949,15 @@ export function App() {
         onChangeBiplotTopK={setBiplotTopK}
         biplotScale={biplotScale}
         onChangeBiplotScale={setBiplotScale}
+        datasetList={datasetList}
+        activeDatasetId={activeDatasetId}
+        onSelectDataset={handleSelectDataset}
+        onRenameDataset={handleRenameDataset}
+        onDeleteDataset={handleDeleteDataset}
+        onOpenRawDataModal={() => setIsRawDataModalOpen(true)}
+        onOpenDatasetManager={() => setIsDatasetManagerOpen(true)}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
       />
 
       {/* 2. Main 3D Viewport Area */}
@@ -864,6 +990,8 @@ export function App() {
                   onToggleBiplot={() => setBiplotVisible(!biplotVisible)}
                   biplotTopK={biplotTopK}
                   biplotScale={biplotScale}
+                  theme={theme}
+                  onToggleTheme={handleToggleTheme}
                 />
               </Suspense>
             ) : (
@@ -895,6 +1023,8 @@ export function App() {
                   syncCameraPos={syncedCamPos}
                   syncTargetPos={syncedTargetPos}
                   titleBadge={`MÀN HÌNH B: ${dualSecondaryMethod} 3D (Đồng bộ)`}
+                  theme={theme}
+                  onToggleTheme={handleToggleTheme}
                 />
               </Suspense>
             </div>
@@ -915,10 +1045,11 @@ export function App() {
         <DataInspector
           point={selectedPoint}
           onClose={() => setSelectedPoint(null)}
+          theme={theme}
         />
 
         {/* Docked metrics stay outside the interactive canvas area. */}
-        <div className="shrink-0 border-t border-slate-800/80 bg-slate-950/90 px-3 py-2">
+        <div className={`shrink-0 border-t px-3 py-2 transition-colors duration-200 ${theme === 'light' ? 'border-slate-300 bg-white/95 text-slate-800' : 'border-slate-800/80 bg-slate-950/90 text-slate-100'}`}>
           <MetricsPanel
             metrics={metrics}
             reductionMethod={reductionConfig.method}
@@ -927,6 +1058,7 @@ export function App() {
             onSaveExperiment={handleSaveExperiment}
             onOpenHistory={handleOpenHistory}
             isSaving={isSavingExperiment}
+            theme={theme}
           />
         </div>
       </div>
@@ -956,6 +1088,7 @@ export function App() {
               setClusteringConfig(updatedConfig);
               if (dataPoints.length > 0) handleApplyClustering(updatedConfig);
             }}
+            theme={theme}
           />
         </Suspense>
       )}
@@ -980,6 +1113,41 @@ export function App() {
             }}
           />
         </Suspense>
+      )}
+
+      {/* Full-Screen Raw Data Preview Modal */}
+      {isRawDataModalOpen && dataset && (
+        <RawDataModal
+          isOpen={isRawDataModalOpen}
+          onClose={() => setIsRawDataModalOpen(false)}
+          datasetName={dataset.name}
+          headers={dataset.headers}
+          rawRows={dataset.rawRows}
+          totalRows={dataset.totalRows}
+          labelColumn={dataset.labelColumn ?? null}
+          theme={theme}
+        />
+      )}
+
+      {/* Dataset Manager Folder Modal */}
+      {isDatasetManagerOpen && (
+        <DatasetManagerModal
+          isOpen={isDatasetManagerOpen}
+          onClose={() => setIsDatasetManagerOpen(false)}
+          datasetList={datasetList}
+          activeDatasetId={activeDatasetId}
+          onSelectDataset={(id) => {
+            handleSelectDataset(id);
+            setIsDatasetManagerOpen(false);
+          }}
+          onRenameDataset={handleRenameDataset}
+          onDeleteDataset={handleDeleteDataset}
+          onFileUpload={(file) => {
+            handleFileUpload(file);
+          }}
+          isComputing={isComputing}
+          theme={theme}
+        />
       )}
     </div>
   );

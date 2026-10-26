@@ -15,6 +15,8 @@ import {
   getAllDatasets,
   getDatasetById,
   saveDataset,
+  updateDataset,
+  deleteDataset,
   getAllExperiments,
   saveExperiment,
   isMongoConnected,
@@ -191,7 +193,37 @@ app.post('/api/datasets/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// 10. High-Performance Compute API with SHA-256 Multi-Tier Caching (LRU + MongoDB)
+// 10. Update dataset name / metadata
+app.patch('/api/datasets/:id', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Tên bộ dữ liệu không hợp lệ.' });
+    }
+    const updated = await updateDataset(req.params.id, { name: name.trim() });
+    if (!updated) {
+      return res.status(404).json({ error: 'Không tìm thấy bộ dữ liệu để cập nhật.' });
+    }
+    res.json(updated);
+  } catch (err: unknown) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+// 11. Delete dataset
+app.delete('/api/datasets/:id', async (req, res) => {
+  try {
+    const success = await deleteDataset(req.params.id);
+    if (!success) {
+      return res.status(404).json({ error: 'Không tìm thấy bộ dữ liệu để xóa.' });
+    }
+    res.json({ success: true, message: 'Đã xóa bộ dữ liệu thành công.' });
+  } catch (err: unknown) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+// 12. High-Performance Compute API with SHA-256 Multi-Tier Caching (LRU + MongoDB)
 app.post('/api/compute', async (req, res) => {
   try {
     const body: unknown = req.body;

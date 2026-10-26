@@ -105,31 +105,75 @@ export function getDb(): Db | null {
 
 // 1. DATASET OPERATIONS
 export async function getAllDatasets(): Promise<DatasetSummary[]> {
+  let list: Array<{
+    id: string;
+    name: string;
+    filename: string;
+    totalRows: number;
+    features?: string[];
+    labelColumn: string | null;
+    idColumn: string | null;
+    createdAt: string;
+  }> = [];
+
   if (isMongoConnected && db) {
     try {
-      const list = await db.collection<StoredDataset>('datasets').find({}, { projection: { rawRows: 0 } }).sort({ createdAt: -1 }).toArray();
-      return list.map(item => ({
+      const mongoDocs = await db.collection<StoredDataset>('datasets').find({}, { projection: { rawRows: 0 } }).toArray();
+      list = mongoDocs.map(item => ({
         id: item.id,
         name: item.name,
         filename: item.filename,
-        total_rows: item.totalRows,
-        label_column: item.labelColumn,
-        id_column: item.idColumn,
-        created_at: item.createdAt,
+        totalRows: item.totalRows,
+        features: item.features,
+        labelColumn: item.labelColumn,
+        idColumn: item.idColumn,
+        createdAt: item.createdAt,
       }));
     } catch (e) {
       console.error(e);
     }
   }
-  return Array.from(memoryStore.datasets.values()).map(item => ({
-    id: item.id,
-    name: item.name,
-    filename: item.filename,
-    total_rows: item.totalRows,
-    label_column: item.labelColumn,
-    id_column: item.idColumn,
-    created_at: item.createdAt,
-  }));
+
+  if (list.length === 0) {
+    list = Array.from(memoryStore.datasets.values()).map(item => ({
+      id: item.id,
+      name: item.name,
+      filename: item.filename,
+      totalRows: item.totalRows,
+      features: item.features,
+      labelColumn: item.labelColumn,
+      idColumn: item.idColumn,
+      createdAt: item.createdAt,
+    }));
+  }
+
+  const summaries: DatasetSummary[] = list.map(item => {
+    const isPreloaded = item.id === 'cancer_wdbc' || item.id === 'wholesale_customers';
+    return {
+      id: item.id,
+      name: item.name,
+      filename: item.filename,
+      total_rows: item.totalRows,
+      features_count: item.features?.length || 0,
+      label_column: item.labelColumn,
+      id_column: item.idColumn,
+      created_at: item.createdAt,
+      is_preloaded: isPreloaded,
+    };
+  });
+
+  // Sort logically: Preloaded files first (Cancer, then Wholesale), then user uploaded newest first
+  summaries.sort((a, b) => {
+    if (a.is_preloaded && !b.is_preloaded) return -1;
+    if (!a.is_preloaded && b.is_preloaded) return 1;
+    if (a.is_preloaded && b.is_preloaded) {
+      if (a.id === 'cancer_wdbc') return -1;
+      return 1;
+    }
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
+  return summaries;
 }
 
 export async function getDatasetById(id: string): Promise<DatasetDocument | null> {
@@ -166,7 +210,7 @@ export async function saveDataset(dataset: DatasetDocument): Promise<void> {
     labelColumn: dataset.labelColumn,
     idColumn: dataset.idColumn,
     rawRows: dataset.rawRows,
-    createdAt: new Date().toISOString(),
+    createdAt: dataset.createdAt || new Date().toISOString(),
   };
 
   memoryStore.datasets.set(dataset.id, doc);
@@ -178,6 +222,61 @@ export async function saveDataset(dataset: DatasetDocument): Promise<void> {
       console.error(e);
     }
   }
+}
+
+export async function updateDataset(id: string, updates: { name?: string }): Promise<DatasetDocument | null> {
+  let doc = memoryStore.datasets.get(id);
+  if (doc) {
+    if (updates.name && updates.name.trim()) {
+      doc = { ...doc, name: updates.name.trim() };
+      memoryStore.datasets.set(id, doc);
+    }
+  }
+
+  if (isMongoConnected && db) {
+    try {
+      const updateFields: Record<string, unknown> = {};
+      if (updates.name && updates.name.trim()) {
+        updateFields.name = updates.name.trim();
+      }
+      if (Object.keys(updateFields).length > 0) {
+        await db.collection<StoredDataset>('datasets').updateOne({ id }, { $set: updateFields });
+        const updated = await db.collection<StoredDataset>('datasets').findOne({ id });
+        if (updated) {
+          doc = {
+            id: updated.id,
+            name: updated.name,
+            filename: updated.filename,
+            totalRows: updated.totalRows,
+            features: updated.features,
+            labelColumn: updated.labelColumn,
+            idColumn: updated.idColumn,
+            rawRows: updated.rawRows,
+            createdAt: updated.createdAt,
+          };
+          memoryStore.datasets.set(id, doc);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  return doc || null;
+}
+
+export async function deleteDataset(id: string): Promise<boolean> {
+  const existedInMemory = memoryStore.datasets.delete(id);
+  let existedInMongo = false;
+  if (isMongoConnected && db) {
+    try {
+      const res = await db.collection('datasets').deleteOne({ id });
+      existedInMongo = res.deletedCount > 0;
+    } catch (e) {
+      console.error(e);
+    }
+  }
+  return existedInMemory || existedInMongo;
 }
 
 // 2. EXPERIMENT OPERATIONS
@@ -250,50 +349,90 @@ export async function saveExperiment(experiment: NewExperiment): Promise<string>
 // 3. SEED INITIAL DATA
 async function seedInitialDataset(database: Db) {
   const cancerCsvPath = path.resolve(process.cwd(), 'data.csv');
-  if (!fs.existsSync(cancerCsvPath)) return;
+  if (fs.existsSync(cancerCsvPath)) {
+    const count = await database.collection('datasets').countDocuments({ id: 'cancer_wdbc' });
+    if (count === 0) {
+      const csvContent = fs.readFileSync(cancerCsvPath, 'utf-8');
+      const parsed = parseCSVString(csvContent, 'Wisconsin Breast Cancer');
+      const rows: DatasetRow[] = parsed.rawRows;
 
-  const count = await database.collection('datasets').countDocuments({ id: 'cancer_wdbc' });
-  if (count === 0) {
-    console.log('🌱 [MongoDB Atlas] Đang nạp bộ dữ liệu ban đầu data.csv vào MongoDB Atlas Cloud...');
-    const csvContent = fs.readFileSync(cancerCsvPath, 'utf-8');
-    const parsed = parseCSVString(csvContent, 'Wisconsin Breast Cancer (data.csv)');
-    const rows: DatasetRow[] = parsed.rawRows;
+      const initialDataset: StoredDataset = {
+        id: 'cancer_wdbc',
+        name: 'Wisconsin Breast Cancer',
+        filename: 'data.csv',
+        totalRows: rows.length,
+        features: parsed.featureColumns,
+        labelColumn: parsed.labelColumn,
+        idColumn: parsed.idColumn,
+        rawRows: rows,
+        createdAt: new Date('2024-01-01T00:00:00.000Z').toISOString(),
+      };
 
-    const initialDataset: StoredDataset = {
-      id: 'cancer_wdbc',
-      name: 'Wisconsin Breast Cancer (data.csv)',
-      filename: 'data.csv',
-      totalRows: rows.length,
-      features: parsed.featureColumns,
-      labelColumn: parsed.labelColumn,
-      idColumn: parsed.idColumn,
-      rawRows: rows,
-      createdAt: new Date().toISOString(),
-    };
+      await database.collection<StoredDataset>('datasets').insertOne(initialDataset);
+    }
+  }
 
-    await database.collection<StoredDataset>('datasets').insertOne(initialDataset);
-    console.log('✅ [MongoDB Atlas] Đã nạp thành công 569 mẫu ung thư vú lên MongoDB Atlas Cloud!');
+  const wholesaleCsvPath = path.resolve(process.cwd(), 'public', 'wholesale.csv');
+  if (fs.existsSync(wholesaleCsvPath)) {
+    const count = await database.collection('datasets').countDocuments({ id: 'wholesale_customers' });
+    if (count === 0) {
+      const csvContent = fs.readFileSync(wholesaleCsvPath, 'utf-8');
+      const parsed = parseCSVString(csvContent, 'Wholesale Customers');
+      const rows: DatasetRow[] = parsed.rawRows;
+
+      const wholesaleDataset: StoredDataset = {
+        id: 'wholesale_customers',
+        name: 'Wholesale Customers',
+        filename: 'wholesale.csv',
+        totalRows: rows.length,
+        features: parsed.featureColumns,
+        labelColumn: parsed.labelColumn,
+        idColumn: parsed.idColumn,
+        rawRows: rows,
+        createdAt: new Date('2024-01-02T00:00:00.000Z').toISOString(),
+      };
+
+      await database.collection<StoredDataset>('datasets').insertOne(wholesaleDataset);
+    }
   }
 }
 
 async function seedInitialDatasetMemory() {
   const cancerCsvPath = path.resolve(process.cwd(), 'data.csv');
-  if (!fs.existsSync(cancerCsvPath)) return;
+  if (fs.existsSync(cancerCsvPath)) {
+    const csvContent = fs.readFileSync(cancerCsvPath, 'utf-8');
+    const parsed = parseCSVString(csvContent, 'Wisconsin Breast Cancer');
 
-  const csvContent = fs.readFileSync(cancerCsvPath, 'utf-8');
-  const parsed = parseCSVString(csvContent, 'Wisconsin Breast Cancer (data.csv)');
+    memoryStore.datasets.set('cancer_wdbc', {
+      id: 'cancer_wdbc',
+      name: 'Wisconsin Breast Cancer',
+      filename: 'data.csv',
+      totalRows: parsed.totalRows,
+      features: parsed.featureColumns,
+      labelColumn: parsed.labelColumn,
+      idColumn: parsed.idColumn,
+      rawRows: parsed.rawRows,
+      createdAt: new Date('2024-01-01T00:00:00.000Z').toISOString(),
+    });
+  }
 
-  memoryStore.datasets.set('cancer_wdbc', {
-    id: 'cancer_wdbc',
-    name: 'Wisconsin Breast Cancer (data.csv)',
-    filename: 'data.csv',
-    totalRows: parsed.totalRows,
-    features: parsed.featureColumns,
-    labelColumn: parsed.labelColumn,
-    idColumn: parsed.idColumn,
-    rawRows: parsed.rawRows,
-    createdAt: new Date().toISOString(),
-  });
+  const wholesaleCsvPath = path.resolve(process.cwd(), 'public', 'wholesale.csv');
+  if (fs.existsSync(wholesaleCsvPath)) {
+    const csvContent = fs.readFileSync(wholesaleCsvPath, 'utf-8');
+    const parsed = parseCSVString(csvContent, 'Wholesale Customers');
+
+    memoryStore.datasets.set('wholesale_customers', {
+      id: 'wholesale_customers',
+      name: 'Wholesale Customers',
+      filename: 'wholesale.csv',
+      totalRows: parsed.totalRows,
+      features: parsed.featureColumns,
+      labelColumn: parsed.labelColumn,
+      idColumn: parsed.idColumn,
+      rawRows: parsed.rawRows,
+      createdAt: new Date('2024-01-02T00:00:00.000Z').toISOString(),
+    });
+  }
 }
 
 export async function testDbConnection(): Promise<{ connected: boolean; message: string }> {

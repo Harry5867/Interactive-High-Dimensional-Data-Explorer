@@ -11,6 +11,7 @@ interface TooltipSliderProps {
   minLabel?: string;
   maxLabel?: string;
   label?: string;
+  theme?: 'dark' | 'light';
 }
 
 export const TooltipSlider: React.FC<TooltipSliderProps> = ({
@@ -24,7 +25,9 @@ export const TooltipSlider: React.FC<TooltipSliderProps> = ({
   minLabel,
   maxLabel,
   label,
+  theme = 'dark',
 }) => {
+  const isLight = theme === 'light';
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [hoverValue, setHoverValue] = useState<number | null>(null);
@@ -177,7 +180,7 @@ export const TooltipSlider: React.FC<TooltipSliderProps> = ({
     <div className="w-full select-none py-1">
       {/* Top Label & live Badge */}
       {label && (
-        <div className="flex justify-between items-center text-slate-300 mb-1.5">
+        <div className={`flex justify-between items-center mb-1.5 ${isLight ? 'text-slate-700' : 'text-slate-300'}`}>
           <span className="font-medium text-[11px]">{label}</span>
           <span className={`font-mono text-xs font-bold px-2 py-0.5 rounded-md border shadow-inner ${colorStyles.badge}`}>
             {formatValue(value)}
@@ -212,7 +215,9 @@ export const TooltipSlider: React.FC<TooltipSliderProps> = ({
         </div>
 
         {/* 2. SLIDER TRACK CONTAINER */}
-        <div className="relative w-full h-2 rounded-full bg-slate-800 border border-slate-700/60 overflow-hidden shadow-inner">
+        <div className={`relative w-full h-2 rounded-full overflow-hidden shadow-inner border ${
+          isLight ? 'bg-slate-200 border-slate-300' : 'bg-slate-800 border-slate-700/60'
+        }`}>
           {/* Active Filled Track */}
           <div
             style={{ width: `${valuePct}%` }}
@@ -257,9 +262,9 @@ export const TooltipSlider: React.FC<TooltipSliderProps> = ({
       </div>
 
       {/* 5. MIN / MAX RANGE LABELS */}
-      <div className="flex justify-between text-[10px] text-slate-500 font-mono -mt-1">
+      <div className={`flex justify-between text-[10px] font-mono -mt-1 ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>
         <span>{minLabel || `Min: ${min}`}</span>
-        <span className="text-slate-400 font-semibold">{formatValue(value)}</span>
+        <span className={`font-semibold ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>{formatValue(value)}</span>
         <span>{maxLabel || `Max: ${max}`}</span>
       </div>
     </div>

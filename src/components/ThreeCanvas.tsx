@@ -15,6 +15,8 @@ import {
   Palette,
   ChevronDown,
   ChevronUp,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
 interface ThreeCanvasProps {
@@ -39,6 +41,9 @@ interface ThreeCanvasProps {
   biplotTopK?: number;
   biplotScale?: number;
   onToggleBiplot?: () => void;
+  // Theme support
+  theme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
 }
 
 const CLUSTER_COLORS = [
@@ -53,13 +58,6 @@ const CLUSTER_COLORS = [
   '#e11d48', // Rose
   '#84cc16', // Lime
 ];
-
-const GROUND_TRUTH_COLORS: Record<string, string> = {
-  'M': '#f43f5e',
-  'B': '#10b981',
-  '1': '#f43f5e',
-  '0': '#10b981',
-};
 
 export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   dataPoints,
@@ -80,6 +78,8 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   biplotTopK = 6,
   biplotScale = 30,
   onToggleBiplot,
+  theme = 'dark',
+  onToggleTheme,
 }) => {
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const [hoveredPoint, setHoveredPoint] = useState<DataPoint | null>(null);
@@ -91,6 +91,30 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   const [biplotVisible, setBiplotVisible] = useState(showBiplot);
   const [isLegendExpanded, setIsLegendExpanded] = useState(true);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
+
+  const isLight = theme === 'light';
+
+  // Dynamic ground-truth classification labels extracted from dataPoints
+  const uniqueLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of dataPoints) {
+      if (p.label !== undefined && p.label !== null && String(p.label).trim() !== '') {
+        set.add(String(p.label).trim());
+      }
+    }
+    return Array.from(set).sort();
+  }, [dataPoints]);
+
+  const labelColorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    const palette = ['#10b981', '#f43f5e', '#6366f1', '#f59e0b', '#06b6d4', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#84cc16'];
+    uniqueLabels.forEach((label, idx) => {
+      if (label === 'M' || label === '1') map[label] = '#f43f5e';
+      else if (label === 'B' || label === '0') map[label] = '#10b981';
+      else map[label] = palette[idx % palette.length];
+    });
+    return map;
+  }, [uniqueLabels]);
 
   // Sync external showBiplot prop changes
   useEffect(() => {
@@ -107,6 +131,9 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   const instancedMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const centroidGroupRef = useRef<THREE.Group | null>(null);
   const biplotGroupRef = useRef<THREE.Group | null>(null);
+  const gridHelperRef = useRef<THREE.GridHelper | null>(null);
+  const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
+  const boxMatRef = useRef<THREE.MeshBasicMaterial | null>(null);
 
   // Normalize points to fit inside [-38, 38] box
   const normalizedPoints = useMemo(() => {
@@ -159,8 +186,9 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
 
     // Scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x07090e);
-    scene.fog = new THREE.FogExp2(0x07090e, 0.005);
+    const bgColor = isLight ? 0xf8fafc : 0x07090e;
+    scene.background = new THREE.Color(bgColor);
+    scene.fog = new THREE.FogExp2(bgColor, isLight ? 0.003 : 0.005);
     sceneRef.current = scene;
 
     // Centroid Group
@@ -234,8 +262,9 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     });
 
     // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+    const ambientLight = new THREE.AmbientLight(0xffffff, isLight ? 1.4 : 0.9);
     scene.add(ambientLight);
+    ambientLightRef.current = ambientLight;
 
     const dirLight1 = new THREE.DirectionalLight(0x6366f1, 2.0);
     dirLight1.position.set(60, 80, 60);
@@ -246,9 +275,10 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     scene.add(dirLight2);
 
     // Grid Floor
-    const gridHelper = new THREE.GridHelper(80, 20, 0x6366f1, 0x334155);
+    const gridHelper = new THREE.GridHelper(80, 20, 0x6366f1, isLight ? 0xcbd5e1 : 0x334155);
     gridHelper.position.y = -38;
     scene.add(gridHelper);
+    gridHelperRef.current = gridHelper;
 
     // 3D Axes
     const axesHelper = new THREE.AxesHelper(40);
@@ -258,11 +288,12 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     // Bounding Box
     const boxGeo = new THREE.BoxGeometry(76, 76, 76);
     const boxMat = new THREE.MeshBasicMaterial({
-      color: 0x334155,
+      color: isLight ? 0x94a3b8 : 0x334155,
       wireframe: true,
       transparent: true,
-      opacity: 0.12,
+      opacity: isLight ? 0.25 : 0.12,
     });
+    boxMatRef.current = boxMat;
     scene.add(new THREE.Mesh(boxGeo, boxMat));
 
     // Pointer Events for Raycasting (Hover / Click)
@@ -426,6 +457,32 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     }
   }, [isAutoRotating]);
 
+  // 3.5 REACTIVE THEME UPDATE (LIGHT / DARK BACKGROUND & LIGHTING)
+  useEffect(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const bgColor = isLight ? 0xf8fafc : 0x07090e;
+    scene.background = new THREE.Color(bgColor);
+    if (scene.fog) {
+      scene.fog.color = new THREE.Color(bgColor);
+      (scene.fog as THREE.FogExp2).density = isLight ? 0.003 : 0.005;
+    }
+    if (ambientLightRef.current) {
+      ambientLightRef.current.intensity = isLight ? 1.4 : 0.9;
+    }
+    if (gridHelperRef.current) {
+      scene.remove(gridHelperRef.current);
+      const grid = new THREE.GridHelper(80, 20, 0x6366f1, isLight ? 0xcbd5e1 : 0x334155);
+      grid.position.y = -38;
+      scene.add(grid);
+      gridHelperRef.current = grid;
+    }
+    if (boxMatRef.current) {
+      boxMatRef.current.color.setHex(isLight ? 0x94a3b8 : 0x334155);
+      boxMatRef.current.opacity = isLight ? 0.25 : 0.12;
+    }
+  }, [isLight]);
+
   // 4. UPDATE INSTANCED MESH & CENTROIDS
   useEffect(() => {
     const scene = sceneRef.current;
@@ -503,7 +560,12 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         }
       } else if (colorMode === 'ground-truth') {
         const lbl = String(p.label ?? '');
-        color.set(GROUND_TRUTH_COLORS[lbl] || CLUSTER_COLORS[Math.abs(hashString(lbl)) % CLUSTER_COLORS.length]);
+        const mappedColor = labelColorMap[lbl];
+        if (mappedColor) {
+          color.set(mappedColor);
+        } else {
+          color.set(CLUSTER_COLORS[Math.abs(hashString(lbl)) % CLUSTER_COLORS.length]);
+        }
       } else if (colorMode === 'feature' && selectedFeature) {
         const val = p.originalFeatures[selectedFeature] ?? fMin;
         const ratio = Math.max(0, Math.min(1, (val - fMin) / fRange));
@@ -657,26 +719,38 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       />
 
       {/* 3D Viewport Title Badge */}
-      <div className="absolute left-4 right-auto top-4 z-10 flex w-fit max-w-[calc(100%-6rem)] min-w-0 flex-col gap-2 rounded-2xl border border-slate-700/70 bg-slate-900/90 px-4 py-3 shadow-xl shadow-slate-950/40 backdrop-blur-md pointer-events-auto">
+      <div className={`absolute left-4 right-auto top-4 z-10 flex w-fit max-w-[calc(100%-6rem)] min-w-0 flex-col gap-2 rounded-2xl border px-4 py-3 shadow-xl backdrop-blur-md pointer-events-auto transition-all ${
+        isLight
+          ? 'bg-white/95 border-slate-300 text-slate-800 shadow-slate-300/40'
+          : 'bg-slate-900/90 border-slate-700/70 text-slate-100 shadow-slate-950/40'
+      }`}>
         <div className="flex min-w-0 items-center gap-2">
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="min-w-0 truncate text-xs font-bold tracking-[0.12em] text-slate-100">
+          <span className={`min-w-0 truncate text-xs font-bold tracking-[0.12em] ${isLight ? 'text-slate-900' : 'text-slate-100'}`}>
             {titleBadge || `KHÔNG GIAN 3D (${reductionMethod})`}
           </span>
-          <span className="shrink-0 text-xs text-slate-500">|</span>
-          <span className="shrink-0 rounded-full border border-indigo-400/20 bg-indigo-400/10 px-2 py-0.5 text-[11px] font-mono font-semibold text-indigo-200">
+          <span className="shrink-0 text-xs text-slate-400">|</span>
+          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-mono font-semibold ${
+            isLight
+              ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+              : 'border-indigo-400/20 bg-indigo-400/10 text-indigo-200'
+          }`}>
             {dataPoints.length} mẫu
           </span>
         </div>
         {axisFeatures && axisFeatures.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 border-t border-slate-700/70 pt-2.5" aria-label="Các đặc trưng trên trục">
+          <div className={`flex flex-wrap gap-1.5 border-t pt-2.5 ${isLight ? 'border-slate-200' : 'border-slate-700/70'}`} aria-label="Các đặc trưng trên trục">
             {axisFeatures.map((feature, index) => (
               <span
                 key={`${index}-${feature}`}
-                className="max-w-full rounded-full border border-indigo-400/25 bg-indigo-950/50 px-2.5 py-1 text-[10px] leading-relaxed text-slate-200 shadow-sm shadow-indigo-950/30 [overflow-wrap:anywhere]"
+                className={`max-w-full rounded-full border px-2.5 py-1 text-[10px] leading-relaxed shadow-sm [overflow-wrap:anywhere] ${
+                  isLight
+                    ? 'border-indigo-200 bg-indigo-50/80 text-slate-700'
+                    : 'border-indigo-400/25 bg-indigo-950/50 text-slate-200 shadow-indigo-950/30'
+                }`}
                 title={feature}
               >
-                <strong className="text-indigo-300">{['X', 'Y', 'Z'][index]}:</strong> {feature}
+                <strong className={isLight ? 'text-indigo-600' : 'text-indigo-300'}>{['X', 'Y', 'Z'][index]}:</strong> {feature}
               </span>
             ))}
           </div>
@@ -691,17 +765,45 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
             onClick={() => setAreViewControlsCollapsed(false)}
             aria-label="Mở thanh công cụ biểu đồ"
             title="Mở thanh công cụ biểu đồ"
-            className="w-full rounded-xl border border-slate-700/60 bg-slate-900/90 p-2 text-slate-200 shadow-xl backdrop-blur-md transition-colors hover:bg-slate-800"
+            className={`w-full rounded-xl border p-2 shadow-xl backdrop-blur-md transition-colors ${
+              isLight
+                ? 'border-slate-300 bg-white/95 text-slate-800 hover:bg-slate-100'
+                : 'border-slate-700/60 bg-slate-900/90 text-slate-200 hover:bg-slate-800'
+            }`}
           >
             <ChevronDown size={16} />
           </button>
         ) : (
-          <div className="flex max-h-full w-full flex-col items-stretch gap-1.5 overflow-y-auto rounded-2xl border border-slate-700/80 bg-slate-900/95 p-2 shadow-xl shadow-slate-950/50 backdrop-blur-md">
+          <div className={`flex max-h-full w-full flex-col items-stretch gap-1.5 overflow-y-auto rounded-2xl border p-2 shadow-xl backdrop-blur-md ${
+            isLight
+              ? 'border-slate-300 bg-white/95 text-slate-800 shadow-slate-300/50'
+              : 'border-slate-700/80 bg-slate-900/95 text-slate-200 shadow-slate-950/50'
+          }`}>
+            {/* Theme Toggle Button */}
+            {onToggleTheme && (
+              <button
+                onClick={onToggleTheme}
+                title={isLight ? 'Chuyển sang nền tối' : 'Chuyển sang nền sáng'}
+                className={`flex min-h-10 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[9px] font-semibold leading-tight transition-all ${
+                  isLight
+                    ? 'bg-amber-100/90 text-amber-900 hover:bg-amber-200 border border-amber-300'
+                    : 'text-amber-300 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                {isLight ? <Moon size={15} /> : <Sun size={15} />}
+                <span>{isLight ? 'Nền tối' : 'Nền sáng'}</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsAutoRotating(!isAutoRotating)}
               title={isAutoRotating ? 'Tạm dừng tự động xoay' : 'Bật tự động xoay 360°'}
               className={`flex min-h-12 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[9px] font-semibold leading-tight transition-all ${
-                isAutoRotating ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-300 hover:bg-slate-800'
+                isAutoRotating
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                  : isLight
+                  ? 'text-slate-700 hover:bg-slate-100'
+                  : 'text-slate-300 hover:bg-slate-800'
               }`}
             >
               {isAutoRotating ? <Pause size={15} /> : <Play size={15} />}
@@ -712,7 +814,11 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
               onClick={() => setCentroidsVisible(!centroidsVisible)}
               title={centroidsVisible ? 'Ẩn tâm cụm 3D phát sáng' : 'Hiện tâm cụm 3D phát sáng'}
               className={`flex min-h-10 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[9px] font-semibold leading-tight transition-all ${
-                centroidsVisible ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-slate-400 hover:bg-slate-800'
+                centroidsVisible
+                  ? 'bg-amber-500/20 text-amber-500 border border-amber-500/40'
+                  : isLight
+                  ? 'text-slate-500 hover:bg-slate-100'
+                  : 'text-slate-400 hover:bg-slate-800'
               }`}
             >
               <Layers size={15} />
@@ -727,7 +833,11 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
                 }}
                 title={biplotVisible ? 'Ẩn véc-tơ đặc trưng 3D (PCA Biplot)' : 'Hiện véc-tơ đặc trưng 3D (PCA Biplot)'}
                 className={`flex min-h-10 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-[9px] font-semibold leading-tight transition-all ${
-                  biplotVisible ? 'bg-rose-600/80 text-white shadow shadow-rose-600/40' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                  biplotVisible
+                    ? 'bg-rose-600/80 text-white shadow shadow-rose-600/40'
+                    : isLight
+                    ? 'text-slate-500 hover:bg-slate-100'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 }`}
               >
                 <Compass size={15} />
@@ -744,13 +854,15 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
               <span>Chụp 3D</span>
             </button>
 
-            <div className="mx-2 h-px bg-slate-700" />
+            <div className={`mx-2 h-px ${isLight ? 'bg-slate-200' : 'bg-slate-700'}`} />
 
             <button
               onClick={handleResetCamera}
               title="Đặt lại góc nhìn mặc định"
               aria-label="Đặt lại góc nhìn mặc định"
-              className="flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] text-slate-300 transition-all hover:bg-slate-800 hover:text-white"
+              className={`flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] transition-all ${
+                isLight ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
             >
               <RotateCcw size={15} />
               <span>Đặt lại</span>
@@ -760,7 +872,9 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
               onClick={() => handleZoom('in')}
               title="Phóng to (+)"
               aria-label="Phóng to"
-              className="flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] text-slate-300 transition-all hover:bg-slate-800 hover:text-white"
+              className={`flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] transition-all ${
+                isLight ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
             >
               <ZoomIn size={15} />
               <span>Phóng to</span>
@@ -770,16 +884,20 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
               onClick={() => handleZoom('out')}
               title="Thu nhỏ (-)"
               aria-label="Thu nhỏ"
-              className="flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] text-slate-300 transition-all hover:bg-slate-800 hover:text-white"
+              className={`flex min-h-9 flex-col items-center justify-center gap-1 rounded-lg px-1 py-1 text-[9px] transition-all ${
+                isLight ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
             >
               <ZoomOut size={15} />
               <span>Thu nhỏ</span>
             </button>
 
-            <div className="mx-2 h-px bg-slate-700" />
+            <div className={`mx-2 h-px ${isLight ? 'bg-slate-200' : 'bg-slate-700'}`} />
 
-            <div className="flex flex-col items-center gap-1.5 rounded-lg border border-slate-700/70 bg-slate-950/60 px-1.5 py-2 text-[9px] text-slate-300">
-              <span className="font-semibold tracking-wide text-slate-300">Cỡ điểm</span>
+            <div className={`flex flex-col items-center gap-1.5 rounded-lg border px-1.5 py-2 text-[9px] ${
+              isLight ? 'bg-slate-50 border-slate-200 text-slate-700' : 'bg-slate-950/60 border-slate-700/70 text-slate-300'
+            }`}>
+              <span className="font-semibold tracking-wide">Cỡ điểm</span>
               <input
                 type="range"
                 min="0.6"
@@ -790,7 +908,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
                 onChange={(e) => setPointScale(parseFloat(e.target.value))}
                 className="h-1.5 w-11 cursor-pointer accent-indigo-400"
               />
-              <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 font-mono font-bold text-indigo-200">{pointScale.toFixed(1)}x</span>
+              <span className="rounded-full bg-indigo-500/15 px-2 py-0.5 font-mono font-bold text-indigo-500">{pointScale.toFixed(1)}x</span>
             </div>
 
             <button
@@ -809,89 +927,93 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       {/* Hover Tooltip */}
       {hoveredPoint && tooltipPos && (
         <div
-          className="fixed z-50 pointer-events-none transform -translate-x-1/2 -translate-y-full mb-3 bg-slate-900/95 backdrop-blur-md text-white text-xs p-3 rounded-xl border border-indigo-500/50 shadow-2xl transition-all"
+          className={`fixed z-50 pointer-events-none transform -translate-x-1/2 -translate-y-full mb-3 text-xs p-3 rounded-xl border shadow-2xl backdrop-blur-md transition-all ${
+            isLight
+              ? 'bg-white/95 text-slate-800 border-indigo-300 shadow-slate-400/40'
+              : 'bg-slate-900/95 text-white border-indigo-500/50 shadow-black/60'
+          }`}
           style={{ left: `${tooltipPos.x}px`, top: `${tooltipPos.y - 12}px` }}
         >
-          <div className="flex items-center justify-between gap-4 font-semibold border-b border-slate-700 pb-1.5 mb-2">
-            <span className="text-indigo-400 font-bold">ID: {hoveredPoint.id}</span>
-            {hoveredPoint.label !== undefined && (
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                hoveredPoint.label === 'M' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' :
-                hoveredPoint.label === 'B' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
-                'bg-slate-700 text-slate-200'
-              }`}>
-                {hoveredPoint.label === 'M' ? 'Ác tính (M)' : hoveredPoint.label === 'B' ? 'Lành tính (B)' : `Nhãn: ${hoveredPoint.label}`}
+          <div className={`flex items-center justify-between gap-4 font-semibold border-b pb-1.5 mb-2 ${
+            isLight ? 'border-slate-200' : 'border-slate-700'
+          }`}>
+            <span className="text-indigo-500 font-bold">ID: {hoveredPoint.id}</span>
+            {hoveredPoint.label !== undefined && hoveredPoint.label !== null && String(hoveredPoint.label).trim() !== '' && (
+              <span
+                className="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                style={{
+                  backgroundColor: `${labelColorMap[String(hoveredPoint.label)] || '#64748b'}25`,
+                  color: labelColorMap[String(hoveredPoint.label)] || (isLight ? '#0f172a' : '#f1f5f9'),
+                  borderColor: `${labelColorMap[String(hoveredPoint.label)] || '#64748b'}60`,
+                }}
+              >
+                Nhãn: {String(hoveredPoint.label)}
               </span>
             )}
           </div>
-          <div className="space-y-1 text-slate-300">
-            <div>Cụm dự đoán: <strong className="text-amber-400">{hoveredPoint.cluster === -1 ? 'Điểm nhiễu' : `Cụm ${hoveredPoint.cluster}`}</strong></div>
+          <div className={`space-y-1 ${isLight ? 'text-slate-600' : 'text-slate-300'}`}>
+            <div>Cụm: <strong className="text-amber-500">{hoveredPoint.cluster === -1 ? 'Điểm nhiễu' : `Cụm ${hoveredPoint.cluster}`}</strong></div>
             <div className="font-mono text-[11px] text-slate-400">
               Tọa độ 3D: ({hoveredPoint.x.toFixed(2)}, {hoveredPoint.y.toFixed(2)}, {hoveredPoint.z.toFixed(2)})
             </div>
             {selectedFeature && hoveredPoint.originalFeatures[selectedFeature] !== undefined && (
-              <div className="text-indigo-300 font-medium pt-1">
+              <div className="text-indigo-500 font-medium pt-1">
                 {selectedFeature}: {hoveredPoint.originalFeatures[selectedFeature]}
               </div>
             )}
           </div>
         </div>
       )}
-      {/* Floating Color Legend (Top-Left, below Title Badge - Không bị đè) */}
-      <div className="absolute left-4 top-28 z-10 pointer-events-auto flex flex-col gap-1.5 rounded-xl border border-slate-700/80 bg-slate-900/90 p-2.5 text-[11px] shadow-xl backdrop-blur-md transition-all hover:bg-slate-900">
-        <div 
-          onClick={() => setIsLegendExpanded(!isLegendExpanded)}
-          className="flex items-center justify-between gap-3 cursor-pointer select-none"
-        >
-          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-            <Palette size={12} className="text-indigo-400" />
-            <span>
-              {colorMode === 'ground-truth' ? 'Nhãn Y khoa thực tế' : colorMode === 'cluster' ? 'Cụm thuật toán' : 'Thang đo đặc trưng'}
+
+      {/* Floating Color Legend (Shown only for cluster or feature mode; ground truth box is removed) */}
+      {colorMode !== 'ground-truth' && (
+        <div className={`absolute left-4 top-28 z-10 pointer-events-auto flex flex-col gap-1.5 rounded-xl border p-2.5 text-[11px] shadow-xl backdrop-blur-md transition-all ${
+          isLight
+            ? 'bg-white/95 border-slate-300 text-slate-800'
+            : 'bg-slate-900/90 border-slate-700/80 text-slate-200'
+        }`}>
+          <div 
+            onClick={() => setIsLegendExpanded(!isLegendExpanded)}
+            className="flex items-center justify-between gap-3 cursor-pointer select-none"
+          >
+            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              <Palette size={12} className="text-indigo-400" />
+              <span>
+                {colorMode === 'cluster' ? 'Cụm thuật toán' : 'Thang đo đặc trưng'}
+              </span>
+            </div>
+            <span className="text-[10px] text-slate-400 hover:text-slate-200">
+              {isLegendExpanded ? '▲' : '▼'}
             </span>
           </div>
-          <span className="text-[10px] text-slate-500 hover:text-slate-300">
-            {isLegendExpanded ? '▲' : '▼'}
-          </span>
-        </div>
 
-        {isLegendExpanded && (
-          <div className="pt-1 border-t border-slate-800 flex flex-col gap-1.5">
-            {colorMode === 'ground-truth' && (
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1.5 font-medium">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow shadow-rose-500/50 inline-block" />
-                  <span className="text-rose-200">Ác tính (M)</span>
-                </div>
-                <div className="flex items-center gap-1.5 font-medium">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow shadow-emerald-500/50 inline-block" />
-                  <span className="text-emerald-200">Lành tính (B)</span>
-                </div>
-              </div>
-            )}
-            {colorMode === 'cluster' && (
-              <div className="flex items-center gap-2 flex-wrap max-w-xs">
-                {CLUSTER_COLORS.slice(0, 5).map((col, idx) => (
-                  <div key={idx} className="flex items-center gap-1 font-medium">
-                    <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: col }} />
-                    <span className="text-slate-300">C{idx}</span>
+          {isLegendExpanded && (
+            <div className={`pt-1 border-t flex flex-col gap-1.5 ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
+              {colorMode === 'cluster' && (
+                <div className="flex items-center gap-2 flex-wrap max-w-xs">
+                  {CLUSTER_COLORS.slice(0, 5).map((col, idx) => (
+                    <div key={idx} className="flex items-center gap-1 font-medium">
+                      <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: col }} />
+                      <span className={isLight ? 'text-slate-700' : 'text-slate-300'}>C{idx}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-1 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-slate-500 inline-block" />
+                    <span className="text-slate-400">Nhiễu</span>
                   </div>
-                ))}
-                <div className="flex items-center gap-1 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-slate-500 inline-block" />
-                  <span className="text-slate-400">Nhiễu</span>
                 </div>
-              </div>
-            )}
-            {colorMode === 'feature' && (
-              <div className="flex items-center gap-2">
-                <span className="text-blue-400 font-mono text-[10px]">Thấp</span>
-                <div className="w-20 h-2 rounded-full bg-gradient-to-r from-blue-500 via-amber-400 to-rose-500" />
-                <span className="text-rose-400 font-mono text-[10px]">Cao</span>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+              )}
+              {colorMode === 'feature' && (
+                <div className="flex items-center gap-2">
+                  <span className="text-blue-500 font-mono text-[10px] font-bold">Thấp</span>
+                  <div className="w-20 h-2 rounded-full bg-gradient-to-r from-blue-500 via-amber-400 to-rose-500" />
+                  <span className="text-rose-500 font-mono text-[10px] font-bold">Cao</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
