@@ -1,26 +1,55 @@
 import Papa from 'papaparse';
-import { ParsedDataset, NormalizationMethod } from '../types';
+import {
+  DatasetRow,
+  DataValue,
+  MIN_NUMERIC_FEATURES,
+  ParsedDataset,
+  NormalizationMethod,
+} from '../types';
 
 export function parseCSVString(csvContent: string, fileName: string = 'Uploaded Dataset'): ParsedDataset {
-  const result = Papa.parse<Record<string, any>>(csvContent.trim(), {
+  if (!csvContent.trim()) {
+    throw new Error('Tệp CSV đang trống.');
+  }
+
+  const result = Papa.parse<Record<string, unknown>>(csvContent.replace(/^\uFEFF/, '').trim(), {
     header: true,
     dynamicTyping: true,
     skipEmptyLines: true,
   });
 
-  const rawRows = result.data;
-  if (!rawRows || rawRows.length === 0) {
-    throw new Error('Tệp CSV rỗng hoặc không đúng định dạng!');
+  const structuralError = result.errors.find((error) => error.code !== 'TooFewFields');
+  if (structuralError) {
+    const row = structuralError.row === undefined ? '' : ` ở dòng ${structuralError.row + 1}`;
+    throw new Error(`CSV không đúng định dạng${row}: ${structuralError.message}`);
+  }
+
+  const rawRows: DatasetRow[] = result.data.map((row) =>
+    Object.fromEntries(
+      Object.entries(row).map(([key, value]): [string, DataValue] => [
+        key.trim(),
+        typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+          ? value
+          : null,
+      ])
+    )
+  );
+  if (rawRows.length < 2) {
+    throw new Error('CSV cần có hàng tiêu đề và ít nhất 2 dòng dữ liệu.');
   }
 
   const headers = Object.keys(rawRows[0]).map(h => h.trim());
+  if (headers.length < MIN_NUMERIC_FEATURES || headers.some((header) => !header)) {
+    throw new Error(`CSV cần có tên cột hợp lệ và ít nhất ${MIN_NUMERIC_FEATURES} cột dữ liệu.`);
+  }
+  if (new Set(headers).size !== headers.length) {
+    throw new Error('CSV có tên cột bị trùng. Hãy đổi tên các cột để mỗi cột là duy nhất.');
+  }
 
   // Heuristic detection for ID, Label, and Numerical Features
   let idColumn: string | null = null;
   let labelColumn: string | null = null;
   const featureColumns: string[] = [];
-
-  const sampleSize = Math.min(rawRows.length, 100);
 
   for (const col of headers) {
     const lowerCol = col.toLowerCase();
@@ -34,9 +63,9 @@ export function parseCSVString(csvContent: string, fileName: string = 'Uploaded 
     // Check data types of values in this column
     let numCount = 0;
     let validCount = 0;
-    const uniqueValues = new Set<any>();
+    const uniqueValues = new Set<DataValue>();
 
-    for (let i = 0; i < sampleSize; i++) {
+    for (let i = 0; i < rawRows.length; i++) {
       const val = rawRows[i][col];
       if (val !== undefined && val !== null && val !== '') {
         validCount++;
@@ -88,6 +117,12 @@ export function parseCSVString(csvContent: string, fileName: string = 'Uploaded 
     }
   }
 
+  if (featureColumns.length < MIN_NUMERIC_FEATURES) {
+    throw new Error(
+      `CSV chỉ nhận diện được ${featureColumns.length} đặc trưng số hợp lệ; cần ít nhất ${MIN_NUMERIC_FEATURES} cột số để phân tích. Kiểm tra dấu phân cách, hàng tiêu đề và dữ liệu trong các cột.`
+    );
+  }
+
   return {
     name: fileName,
     totalRows: rawRows.length,
@@ -100,7 +135,7 @@ export function parseCSVString(csvContent: string, fileName: string = 'Uploaded 
 }
 
 export function extractFeatureMatrix(
-  rows: Record<string, any>[],
+  rows: DatasetRow[],
   featureColumns: string[],
   normalization: NormalizationMethod
 ): number[][] {
